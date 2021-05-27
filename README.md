@@ -1,6 +1,6 @@
 # product_analytics
 
-in project dir
+in the project dir
 ```bash
 pip3 install ipython
 pip3 install retentioneering
