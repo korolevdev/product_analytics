@@ -1,0 +1,835 @@
+
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Graph Editor</title>
+  <script src="https://code.jquery.com/jquery-3.4.1.js"></script>
+  <script src="https://d3js.org/d3.v5.min.js"></script>
+  <script type="text/javascript">
+
+    var node_params;
+    var mynodes = [];
+    var mylinks = [];
+
+
+    let maxDegree = 0;
+    let maxWeigth = 0;
+    let width = 800;
+    let height = 800;
+
+
+    function initialize(initNodes, initNodeParams, initLinks) {
+      mynodes = initNodes;
+      node_params = initNodeParams;
+      mylinks = initLinks;
+
+      if (!0) {
+        
+        let rawNodes = [];
+
+        let delta = 0.1;
+        for (i = 0; i < mynodes.length; i++) {
+          let newRawNode = null;
+
+          //fixing correct positions for target nodes
+          if (mynodes[i].type == 'bad_node') {
+            newRawNode = {
+              'index': mynodes[i].index,
+              'name': mynodes[i].name,
+              'type': mynodes[i].type,
+              'degree': mynodes[i].degree,
+              'fx': width * (1 - delta),
+              'fy': height / 2
+            };
+          } else if (mynodes[i].type == 'nice_node') {
+            newRawNode = {
+              'index': mynodes[i].index,
+              'name': mynodes[i].name,
+              'type': mynodes[i].type,
+              'degree': mynodes[i].degree,
+              'fx': width * delta,
+              'fy': height / 2
+            };
+          } else {
+            //for non-target nodes there x-s and y-s will be added after forceSimulation
+            newRawNode = {
+              'index': mynodes[i].index,
+              'name': mynodes[i].name,
+              'type': mynodes[i].type,
+              'degree': mynodes[i].degree
+            };
+          }
+          //needed for normalization later
+          if (mynodes[i].degree > maxDegree) {
+            maxDegree = mynodes[i].degree;
+          }
+
+          rawNodes.push(newRawNode);
+        }
+        
+        var layout = d3
+          .forceSimulation(rawNodes)
+          .tick(5)
+          ;
+
+
+        let maxX = 0,
+            maxY = 0,
+            minX = 0,
+            minY = 0;
+
+        for (let i = 0; i < rawNodes.length; i++) {
+          if (rawNodes[i].type == 'suit_node') {
+            if (rawNodes[i].x > maxX) {
+              maxX = rawNodes[i].x;
+            }
+            if (rawNodes[i].x < minX) {
+              minX = rawNodes[i].x;
+            }
+            if (rawNodes[i].y > maxY) {
+              maxY = rawNodes[i].y;
+            }
+            if (rawNodes[i].y < minY) {
+              minY = rawNodes[i].y;
+            }
+          }
+        }
+
+        let offsetMaxX = -minX + maxX;
+        let offsetMaxY = -minY + maxY;
+
+        //Coordinates now have some unpredicted values. I set them so they fill my viewbox with some padding from borders.
+        //At first I normalize them, then multiply by width and height.
+
+        for (let i = 0; i < rawNodes.length; i++) {
+
+          if (rawNodes[i].type == 'suit_node') {
+            //x, y >= 0
+            rawNodes[i].x += -minX;
+            rawNodes[i].y += -minY;
+
+            //x, y from [0, 1 - 2 * delta]
+            rawNodes[i].x = rawNodes[i].x / offsetMaxX * (1 - 2 * delta);
+            rawNodes[i].y = rawNodes[i].y / offsetMaxY * (1 - 2 * delta);
+
+            //x, y from [delta, 1 - delta]
+            rawNodes[i].x += delta;
+            rawNodes[i].y += delta;
+
+            //x, y from [(width | height) * delta, (width | height) * (1 - delta)]
+
+            rawNodes[i].x *= width;
+            rawNodes[i].y *= height;
+
+          }
+
+        }
+
+        for (let i = 0; i < mynodes.length; i++) {
+          mynodes[i].x = rawNodes[i].x;
+          mynodes[i].y = rawNodes[i].y;
+        }
+
+        for (let i = 0; i < mylinks.length;  i++) {
+          mylinks[i].source.x = rawNodes[mylinks[i].source.index].x;
+          mylinks[i].source.y = rawNodes[mylinks[i].source.index].y;
+          mylinks[i].target.x = rawNodes[mylinks[i].target.index].x;
+          mylinks[i].target.y = rawNodes[mylinks[i].target.index].y;
+          if (mylinks[i].weight > maxWeigth) {
+            maxWeigth = mylinks[i].weight;
+          }
+        }
+      } else {
+        // if layout_dump was used:
+        for (i = 0; i < mynodes.length; i++) {
+          if (mynodes[i].degree > maxDegree) {
+            maxDegree = mynodes[i].degree;
+          }
+        }
+        for (let i = 0; i < mylinks.length;  i++) {
+          if (mylinks[i].weight > maxWeigth) {
+            maxWeigth = mylinks[i].weight;
+          }
+        } 
+      }
+
+      
+      
+      
+      makeCheckboxes();
+      setLinkThreshold();
+      displayingWeights();
+    }
+
+    function drawGraph(nodes, links) {
+      zoom = d3.zoom()
+          .scaleExtent([0.5, 8])
+          .translateExtent([[0, 0], [width, height]])
+          .extent([[0, 0], [width, height]])
+          .on("zoom", zoomed)
+          ;
+
+      var svg = d3.select("#freakingGraph").append("svg")
+        .attr("viewBox", [0, 0, width, height])
+        .call(zoom)
+        ;
+
+      //I append all elemets to maingroup so zoom works properly
+      var maingroup = svg.append('g');
+
+      function zoomed() {
+        maingroup.attr("transform", d3.event.transform);
+      }
+
+
+      function calcMarkers(d) {
+
+          let dist = Math.sqrt((nodes[whereEquals(d.target.index)].x - nodes[whereEquals(d.source.index)].x) ** 2 + (nodes[whereEquals(d.target.index)].y - nodes[whereEquals(d.source.index)].y) ** 2);
+          if (dist > 0 && dist <= 200){
+              return - Math.sqrt((0.5 - (d.target.degree ) / 2 / dist)) * (d.target.degree) / 2;
+
+          } else {
+              return 0;
+          }
+      }
+
+      var path = maingroup.append("g").selectAll("path")
+          .data(links)
+          .enter()
+          .append("path")
+          .attr("class", function(d) { return "link " + d.type; })
+          .attr("stroke-width", function(d) { return Math.max(d.weight * 20, 1); })
+          .attr("id", function(d,i) { return "link_"+i; })
+          .attr("d", linkArc)
+          ;
+
+      let textMarkersSelection = maingroup.append("g").selectAll("text")
+          .data(links)
+          .enter();
+
+      textMarkersSelection.append("text")
+          .style("font-size", "13px")
+          .attr("dy", "4.2px")
+          .append("textPath")
+          .attr("xlink:href", function(d,i) { return "#link_"+i; })
+          .attr("startOffset", "35%")
+          .text("➤")
+          ;
+
+      textMarkersSelection.append("text")
+          .style("font-size", "13px")
+          .attr("dy", "4.2px")
+          .append("textPath")
+          .attr("xlink:href", function(d,i) { return "#link_"+i; })
+          .attr("startOffset", "65%")
+          .text("➤")
+          ;
+
+      var edgetext = maingroup.append("g").selectAll("text")
+          .data(links)
+          .enter().append("text")
+          .append("textPath")
+          .attr("xlink:href",function(d,i){return "#link_"+i;})
+          .style("text-anchor","middle")
+          .attr("startOffset", "50%")
+          .attr("id", function(d,i) { return "node_text"+i; })
+          ;
+
+      function whereEquals(index) {
+        for (var i = 0; i < nodes.length; i++) {
+          if (index == nodes[i].index) {
+            return i;
+          }
+        }
+      }
+
+
+        function roundToSignificantFigures(num, n) {
+            if(num == 0) {
+                return 0;
+            }
+
+            d = Math.ceil(Math.log10(num < 0 ? -num: num));
+            power = n - d;
+
+            magnitude = Math.pow(10, power);
+            shifted = Math.round(num*magnitude);
+            return shifted/magnitude;
+        };
+
+
+
+      function displayingWeights() {
+        d3.selectAll("#show-weights").each(function(d) {
+          cb = d3.select(this);
+          if (cb.property("checked")) {
+            edgetext = edgetext.text(function(d) {
+                if ($('#show-percents')[0].checked) {
+                    if (d['weight_text'] > 1) {
+                      return d['weight_text']
+                    } else {
+                      return roundToSignificantFigures(d['weight_text'] * 100, 2) + "%";
+                    };
+                } else {
+                    if (d['weight_text'] > 1) {
+                      return d['weight_text']
+                    } else {
+                      return roundToSignificantFigures(d['weight_text'], 2);
+                    };
+                }
+            })
+          } else {
+            edgetext = edgetext.text(function(d) { return ; })
+          }
+
+
+        })
+      };
+
+
+
+        d3.selectAll("#show-weights").on("change", displayingWeights);
+        d3.selectAll("#show-percents").on("change", displayingWeights);
+
+        function dragstarted(d) {
+          d3.select(this).raise().classed("active", true);
+        }
+
+        function dragged(d) {
+          d3.select(this)
+          .attr("cx", d.x = d3.event.x)
+          .attr("cy", d.y = d3.event.y);
+        }
+
+        function dragended(d) {
+
+          d3.select(this).classed("active", false);
+          path = path.attr("d", linkArc);
+
+          text = text
+            .attr('x', function(d) { return d.x; })
+            .attr('y', function(d) { return d.y; })
+            ;
+          defs.attr("refY", function(d) { return calcMarkers(d); });
+          defs.append("path")
+            .attr("d", "M0,-5L10,0L0,5");
+        };
+
+        var circle = maingroup.append("g").selectAll("circle")
+            .data(nodes)
+            .enter().append("circle")
+            .attr("class", function(d) { return "circle " + d.type; })
+            .attr("r", function(d) { return d.degree; })
+            .attr('cx', function(d) { return d.x; })
+            .attr('cy', function(d) { return d.y; })
+            .style("cursor", "default")
+            .call(d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended));
+
+
+        var text = maingroup.append("g").selectAll("text")
+          .data(nodes)
+          .enter().append("text")
+          .attr('x', function(d) { return d.x; })
+          .attr('y', function(d) { return d.y; })
+          .attr('id', function(d) { return "node-name" + d.index })
+          .attr('class', 'node-name')
+          .text(function(d) { return d.name; })
+          ;
+
+        function linkArc(d) {
+          var dx = nodes[whereEquals(d.target.index)].x - nodes[whereEquals(d.source.index)].x,
+              dy = nodes[whereEquals(d.target.index)].y - nodes[whereEquals(d.source.index)].y,
+              dr = dx * dx + dy * dy;
+              dr = Math.sqrt(dr);
+            if (dr > 200) {
+              dr *= 5
+            } else {
+              dr /= 2
+            };
+            if (dr > 0) {
+              return "M" + nodes[whereEquals(d.source.index)].x + "," + nodes[whereEquals(d.source.index)].y + "A" + (dr * 1.1) + "," + (dr * 1.1) + " 0 0,1 " + nodes[whereEquals(d.target.index)].x + "," + nodes[whereEquals(d.target.index)].y;
+            }
+            else {
+              minRadius = 24;
+              radius = Math.max(minRadius, nodes[whereEquals(d.source.index)].degree);
+              return "M" + nodes[whereEquals(d.source.index)].x + "," + nodes[whereEquals(d.source.index)].y + "A" + radius + "," + radius + " 0 1,0 " + (nodes[whereEquals(d.target.index)].x + 0.1) + "," + (nodes[whereEquals(d.target.index)].y + 0.1);
+            }
+        }
+
+        //synch with 'show names' and 'show weights' checkboxes
+        displayingWeights();
+        changeNamesVisibility(document.getElementById("show-names").checked)
+    }
+
+
+
+    function changeLabel(curinput) {
+      document.getElementById('label' + curinput.id.substring(4)).innerHTML = curinput.value;
+      mynodes[whereEquals1(curinput.id.substring(4))].name = curinput.value;
+      $(curinput).attr('size', curinput.value.length + 2)
+    };
+
+    function whereEquals1(index) {
+      for (var i = 0; i < mynodes.length; i++) {
+        if (index == mynodes[i].index) {
+          return i;
+        }
+      }
+    }
+
+    function makeCheckboxes() {
+
+      for (var i = 0; i < mynodes.length; i++) {
+
+        var newDiv = document.createElement('div');
+        newDiv.id = '#checkdiv' + mynodes[i].index;
+        $( '#check-boxes' ).append(newDiv);
+
+        var newCheckbox = document.createElement('input');
+        newCheckbox.type = 'checkbox';
+        newCheckbox.id = 'checkbox' + mynodes[i].index;
+        newCheckbox.checked = true;
+        newCheckbox.className = 'checkbox-class node-checkbox';
+        $( newDiv ).append(newCheckbox);
+
+        var newNameInput = document.createElement('input');
+        newNameInput.id = 'name-input' + mynodes[i].index;
+        newNameInput.type = 'text';
+        newNameInput.value = mynodes[i].name;
+        $( newNameInput ).attr('size', newNameInput.value.length + 3);
+
+        $( newDiv ).append(newNameInput);
+        $( newNameInput ).on('keypress', updateName);
+
+      }
+    }
+
+    function updateName() {
+
+      document.getElementById('node-name' + this.id.substring(10)).innerHTML = this.value;
+      mynodes[this.id.substring(10)].name = this.value;
+      this.size = this.value.length + 3;
+
+    }
+
+    function getCorrectLinks(newIdx) {
+      var newLinks = [];
+      for (var i = 0; i < mylinks.length; i++) {
+        if (newIdx.includes(mylinks[i].source.index) && newIdx.includes(mylinks[i].target.index)) {
+          newLinks.push(mylinks[i]);
+        }
+      }
+      return newLinks;
+    }
+    function clearSVG() {
+      $( 'svg' ).remove();
+      $( '.node-edit' ).each(function() {
+        this.remove();
+      });
+    }
+    function changeNodes() {
+      var newNodes = [];
+      var newIdx = [];
+
+      $( '.node-checkbox' ).each(function(i, obj) {
+
+        if (this.checked) {
+          newNodes.push(mynodes[i]);
+          newIdx.push(mynodes[i].index);
+        }
+
+      });
+
+      var newLinks = getCorrectLinks(newIdx)
+
+
+      clearSVG();
+      drawGraph(newNodes, newLinks);
+    }
+
+    function setLinkThreshold () {
+      let idxInLinks = new Array(mynodes.length).fill(false);
+      let newLinks = [];
+
+      let thresholdValue = $('#threshold-link-range').val();
+      let blockDeleteTargets = $('#block-targets')[0].checked;
+
+      for (let i = 0; i < mylinks.length; i++) {
+        if (mylinks[i].target.type == 'nice_node' || mylinks[i].source.type == 'nice_node' || mylinks[i].target.type == 'bad_node' || mylinks[i].source.type == 'bad_node') {
+          if (blockDeleteTargets) {
+
+            newLinks.push(mylinks[i]);
+            idxInLinks[mylinks[i].target.index] = true;
+            idxInLinks[mylinks[i].source.index] = true;
+          } else if (mylinks[i].weight * maxWeigth >= thresholdValue) {
+            newLinks.push(mylinks[i]);
+            idxInLinks[mylinks[i].target.index] = true;
+            idxInLinks[mylinks[i].source.index] = true;
+          }
+        } else if (mylinks[i].weight * maxWeigth >= thresholdValue) {
+          newLinks.push(mylinks[i]);
+          idxInLinks[mylinks[i].target.index] = true;
+          idxInLinks[mylinks[i].source.index] = true;
+        }
+      }
+
+      let newNodes = [];
+      for (let i = 0; i < mynodes.length; i++) {
+        if (idxInLinks[i]) {
+          newNodes.push(mynodes[i]);
+          $('#checkbox' + mynodes[i].index).prop('checked', true);
+        } else {
+          $('#checkbox' + mynodes[i].index).prop('checked', false);
+        }
+      }
+      clearSVG();
+      drawGraph(newNodes, newLinks);
+    }
+
+    function updateLinkThresholdText(val) {
+      document.getElementById('threshold-link-text').innerHTML = val;
+    }
+
+    function setNodeThreshold() {
+      var newNodes = [];
+      var newIdx = [];
+
+      let thresholdValue = $('#threshold-node-range').val();
+      let blockDeleteTargets = $('#block-targets')[0].checked;
+
+      for (let i = 0; i < mynodes.length; i++) {
+        if (mynodes[i].type == 'bad_node' || mynodes[i].type == 'nice_node') {
+          if (blockDeleteTargets) {
+            newNodes.push(mynodes[i]);
+            newIdx.push(mynodes[i].index);
+            $('#checkbox' + mynodes[i].index).prop('checked', true);
+          } else if (mynodes[i].degree >= $('#threshold-node-range').val() * maxDegree) {
+            newNodes.push(mynodes[i]);
+            newIdx.push(mynodes[i].index);
+            $('#checkbox' + mynodes[i].index).prop('checked', true);
+          } else {
+            $('#checkbox' + mynodes[i].index).prop('checked', false);
+          }
+        } else if (mynodes[i].degree >= $('#threshold-node-range').val() * maxDegree) {
+          newNodes.push(mynodes[i]);
+          newIdx.push(mynodes[i].index);
+          $('#checkbox' + mynodes[i].index).prop('checked', true);
+        } else {
+          $('#checkbox' + mynodes[i].index).prop('checked', false);
+        }
+      }
+      var newLinks = getCorrectLinks(newIdx);
+
+      clearSVG();
+      drawGraph(newNodes, newLinks);
+    }
+
+    function updateNodeThresholdText(val) {
+      document.getElementById('threshold-node-text').innerHTML = val;
+    }
+
+
+    function changeNamesVisibility(isHidden) {
+
+      if (isHidden) {
+        $('.node-name').each(
+          function() {
+            $(this).show();
+          });
+      } else {
+        $('.node-name').each(
+          function() {
+            $(this).hide();
+          });
+      }
+    }
+
+    function downloadLayout() {
+        var a = document.createElement("a");
+        var file = new Blob([JSON.stringify(mynodes)], {type: "text/json;charset=utf-8"});
+        a.href = URL.createObjectURL(file);
+        a.download = "node_params.json";
+        console.log(1);
+        a.click();
+
+    }
+
+  </script>
+
+  <style type="text/css">
+      watermark {
+        width: 100%;
+      }
+      watermark h3 {
+        width: 100%;
+        text-align: center;
+      }
+      html {
+        font-size: 10px;
+      }
+
+      circle {
+        fill: #ccc;
+        stroke: #333;
+        stroke-width: 1.5px;
+      }
+
+      .circle.source_node {
+        fill: #f3f310;
+      }
+
+      .circle.nice_node {
+        fill: green;
+      }
+
+      .circle.bad_node {
+        fill: red;
+      }
+
+      .link {
+        fill: none;
+        stroke: #666;
+        stroke-opacity: 0.7;
+      }
+
+      #nice_target {
+        fill: green;
+      }
+
+      .link.nice_target {
+        stroke: green;
+      }
+
+      #source {
+        fill: yellow;
+      }
+
+      .link.source {
+        stroke: #f3f310;
+      }
+
+      .link.positive {
+        stroke: green;
+      }
+
+      .link.negative {
+        stroke: red;
+      }
+
+      #source {
+        fill: orange;
+      }
+
+      .link.source1 {
+        stroke: orange;
+      }
+
+      #bad_target {
+        fill: red;
+      }
+
+      .link.bad_target {
+        stroke: red;
+      }
+      text {
+        font: 12px sans-serif;
+        pointer-events: none;
+      }
+
+      main li {
+        display: inline;
+      }
+      .graphlist {
+        list-style-type: none;
+
+      }
+      .graphloader {
+        margin-top: 5%;
+        margin-bottom: 5%;
+      }
+      .graphloader input {
+        margin: auto;
+      }
+
+      h1 {
+        text-align: center;
+      }
+
+      .bottom-checkbox {
+        margin-right: 5%;
+        display: inline;
+      }
+
+      .checkbox-class {
+        margin-right: 3px;
+      }
+
+      .node-edit {
+        position: relative;
+        font-size: 12px;
+        border: none;
+        background-color: rgba(1,1,1,0);
+      }
+
+      .node-edit:focus {
+        background-color: #ddd;
+      }
+
+      #option {
+        margin-left: 5px;
+      }
+
+      #freakingGraph {
+        border: solid 2px black;
+        /*position: relative;*/
+      }
+
+      .container {
+        margin: 0!important;
+        padding-right: 0!important;
+        max-width: 1200px!important;
+      }
+      .col-8 {
+        padding: 0px 4px 0px 2px!important;
+      }
+      .col-4 {
+        padding-right: 0px!important;
+      }
+      @media (max-width: 576px) {
+        form label {
+          font-size: 10px;
+        }
+      }
+
+
+      @media (max-width: 768px) {
+        form label {
+          font-size: 0.8rem;
+        }
+      }
+
+
+      @media (max-width: 992px) {
+        form label {
+          font-size: 1rem;
+        }
+      }
+
+      @media (max-width: 1200px) {
+        form label {
+          font-size: 1rem;
+        }
+      }
+
+      @media (min-width: 1201px) {
+        form label {
+          font-size: 1.4rem;
+        }
+      }
+
+  </style>
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous">
+</head>
+<body>
+
+
+
+  <main>
+
+    <div class="container">
+
+        <div class="row">
+          <div class="watermark" style="z-index: 1010; background-color: #FFF; width: 100%">
+            <h3>Retentioneering</h3>
+          </div>
+          <div class="col-8">
+
+            <div id="freakingGraph" style="z-index: 1000">
+              <!-- graph will be appended here -->
+            </div>
+          </div>
+          <div class="col-4" style="z-index: 1010; background-color: #FFF">
+            <form>
+              <div id="check-boxes">
+
+              </div>
+              <br>
+              <input name="submit" value="Update nodes" style="width: 80%;" type="button" onclick="changeNodes()">
+
+            </form>
+
+            <br>
+            <br>
+            <div style="z-index: 1010; background-color: #FFF">
+              <h6>Nodes Threshold</h6>
+              <input id="threshold-node-range" name="threshold-node" type="range" min="0" max="1" step="0.01" value="0.05"
+              oninput="updateNodeThresholdText(this.value)" onchange="updateNodeThresholdText(this.value)">
+              <label id="threshold-node-text">0.05</label>
+              <input type="button" value="Set threshold" onclick="setNodeThreshold()">
+            </div>
+            <br>
+            <div>
+              <h6>Links Threshold</h6>
+              <input id="threshold-link-range" name="threshold" type="range" min="0" max="1" step="0.01" value=0.021929082764683718
+              oninput="updateLinkThresholdText(this.value*0.9120308502920851)" onchange="updateLinkThresholdText(this.value*0.9120308502920851)">
+              <label id="threshold-link-text">0.021929082764683718</label>
+              <input type="button" value="Set threshold" onclick="setLinkThreshold()">
+            </div>
+          </div>
+
+
+
+
+          <div class="col-12" style="z-index: 1010; background-color: #FFF">
+
+            <div class="weight-checkbox bottom-checkbox">
+              <input type="checkbox" class="checkbox checkbox-class" checked value="weighted" id="show-weights"><label> Show weights </label>
+            </div>
+
+            <div class="percent-checkbox bottom-checkbox">
+              <input type="checkbox" class="checkbox checkbox-class" checked id="show-percents"><label> Percents </label>
+            </div>
+
+            <div class="bottom-checkbox">
+              <input type="checkbox" class="checkbox checkbox-class" checked id="show-names" onchange="changeNamesVisibility(this.checked)"><label> Show nodes names</label>
+            </div>
+
+            <div class="bottom-checkbox">
+              <input type="checkbox" class="checkbox checkbox-class" id="block-targets" onchange="setLinkThreshold ()"><label> Show all edges for targets </label>
+            </div>
+            <div id="option">
+              <input name="downloadButton"
+              type="button"
+              value="download"
+              onclick="downloadLayout()" />
+            </div>
+          </div>
+      </div>
+
+
+
+
+  </main>
+
+  <script src="https://api.retentioneering.com/files/d3.v4.min.js"></script>
+
+  <script type="text/javascript">
+
+    updateLinkThresholdText(0.021929082764683718*0.9120308502920851);
+    initialize([{"index": 0, "name": "reg", "x": 179.5558844329864, "y": 266.2506771221699, "type": "suit_node", "degree": 4.568325841521161}, {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, {"index": 2, "name": "session_start", "x": 386.13423578526897, "y": 226.59839151375556, "type": "suit_node", "degree": 5.295763367353764}, {"index": 3, "name": "phs", "x": 337.49690025222367, "y": 174.4256956503953, "type": "suit_node", "degree": 22.007712479055225}, {"index": 4, "name": "tool", "x": 335.5350555068032, "y": 202.3351314882068, "type": "suit_node", "degree": 8.793596429998576}, {"index": 5, "name": "preview", "x": 458.0, "y": 205.789176461164, "type": "suit_node", "degree": 7.947744824475501}, {"index": 6, "name": "sign_up", "x": 215.35571013982084, "y": 240.6645252828419, "type": "suit_node", "degree": 4.094155014483408}, {"index": 7, "name": "basket", "x": 289.0004161604141, "y": 178.40099272751772, "type": "suit_node", "degree": 5.470001594975655}, {"index": 8, "name": "funnel", "x": 338.32954059296145, "y": 125.07692133244926, "type": "suit_node", "degree": 4.328873689933302}, {"index": 9, "name": "order", "x": 75.0, "y": 50.0, "type": "nice_node", "degree": 4.004630574482791}, {"index": 10, "name": "ecom", "x": 410.25039479330866, "y": 124.54505946373123, "type": "suit_node", "degree": 4.234332794242995}, {"index": 11, "name": "auth", "x": 362.595812949768, "y": 244.881406490221, "type": "suit_node", "degree": 5.545660036941694}, {"index": 12, "name": "prparam", "x": 410.7163451035385, "y": 242.50333251730862, "type": "suit_node", "degree": 5.448520874458266}, {"index": 13, "name": "onb", "x": 372.91447506188354, "y": 196.75456606096225, "type": "suit_node", "degree": 5.703845606356579}, {"index": 14, "name": "login", "x": 319.7919010995886, "y": 256.9056847653726, "type": "suit_node", "degree": 4.228698928622267}, {"index": 15, "name": "first_open", "x": 291.1311449404731, "y": 208.16082286328648, "type": "suit_node", "degree": 4.50802547158971}, {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, {"index": 18, "name": "prov", "x": 388.4167087070837, "y": 210.4249967845844, "type": "suit_node", "degree": 10.178138200352954}, {"index": 19, "name": "chout_link", "x": 337.49002274708397, "y": 283.0, "type": "suit_node", "degree": 4.5042181103483045}, {"index": 20, "name": "edit", "x": 422.34784124399624, "y": 180.18519597540111, "type": "suit_node", "degree": 10.368249008285298}, {"index": 21, "name": "dandd", "x": 282.57442402917593, "y": 230.48927399915033, "type": "suit_node", "degree": 6.204204904635891}], {"order": "nice_target"}, [{"source": {"index": 11, "name": "auth", "x": 362.595812949768, "y": 244.881406490221, "type": "suit_node", "degree": 5.545660036941694}, "target": {"index": 11, "name": "auth", "x": 362.595812949768, "y": 244.881406490221, "type": "suit_node", "degree": 5.545660036941694}, "weight": 0.31753673546280403, "weight_text": 0.28960329884311403, "type": "suit"}, {"source": {"index": 11, "name": "auth", "x": 362.595812949768, "y": 244.881406490221, "type": "suit_node", "degree": 5.545660036941694}, "target": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "weight": 0.36082387909741703, "weight_text": 0.32908250925890575, "type": "suit"}, {"source": {"index": 11, "name": "auth", "x": 362.595812949768, "y": 244.881406490221, "type": "suit_node", "degree": 5.545660036941694}, "target": {"index": 2, "name": "session_start", "x": 386.13423578526897, "y": 226.59839151375556, "type": "suit_node", "degree": 5.295763367353764}, "weight": 0.06438648637334114, "weight_text": 0.058722461914398075, "type": "suit"}, {"source": {"index": 11, "name": "auth", "x": 362.595812949768, "y": 244.881406490221, "type": "suit_node", "degree": 5.545660036941694}, "target": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "weight": 0.27563109641227446, "weight_text": 0.25138406322782636, "type": "suit"}, {"source": {"index": 11, "name": "auth", "x": 362.595812949768, "y": 244.881406490221, "type": "suit_node", "degree": 5.545660036941694}, "target": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "weight": 0.27667769079415583, "weight_text": 0.2523385895918445, "type": "suit"}, {"source": {"index": 7, "name": "basket", "x": 289.0004161604141, "y": 178.40099272751772, "type": "suit_node", "degree": 5.470001594975655}, "target": {"index": 7, "name": "basket", "x": 289.0004161604141, "y": 178.40099272751772, "type": "suit_node", "degree": 5.470001594975655}, "weight": 0.15217482312554945, "weight_text": 0.13878813332824252, "type": "suit"}, {"source": {"index": 7, "name": "basket", "x": 289.0004161604141, "y": 178.40099272751772, "type": "suit_node", "degree": 5.470001594975655}, "target": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "weight": 0.21120274626365806, "weight_text": 0.19262342025886756, "type": "suit"}, {"source": {"index": 7, "name": "basket", "x": 289.0004161604141, "y": 178.40099272751772, "type": "suit_node", "degree": 5.470001594975655}, "target": {"index": 4, "name": "tool", "x": 335.5350555068032, "y": 202.3351314882068, "type": "suit_node", "degree": 8.793596429998576}, "weight": 0.035500481433415665, "weight_text": 0.03237753426749647, "type": "suit"}, {"source": {"index": 7, "name": "basket", "x": 289.0004161604141, "y": 178.40099272751772, "type": "suit_node", "degree": 5.470001594975655}, "target": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "weight": 0.1471930338677942, "weight_text": 0.13424458783551602, "type": "suit"}, {"source": {"index": 19, "name": "chout_link", "x": 337.49002274708397, "y": 283.0, "type": "suit_node", "degree": 4.5042181103483045}, "target": {"index": 19, "name": "chout_link", "x": 337.49002274708397, "y": 283.0, "type": "suit_node", "degree": 4.5042181103483045}, "weight": 0.048896889521497046, "weight_text": 0.0445954717269291, "type": "suit"}, {"source": {"index": 19, "name": "chout_link", "x": 337.49002274708397, "y": 283.0, "type": "suit_node", "degree": 4.5042181103483045}, "target": {"index": 21, "name": "dandd", "x": 282.57442402917593, "y": 230.48927399915033, "type": "suit_node", "degree": 6.204204904635891}, "weight": 0.03817976305103195, "weight_text": 0.034821121759383, "type": "suit"}, {"source": {"index": 19, "name": "chout_link", "x": 337.49002274708397, "y": 283.0, "type": "suit_node", "degree": 4.5042181103483045}, "target": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "weight": 0.039226357432913306, "weight_text": 0.03577564812340117, "type": "suit"}, {"source": {"index": 19, "name": "chout_link", "x": 337.49002274708397, "y": 283.0, "type": "suit_node", "degree": 4.5042181103483045}, "target": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "weight": 0.03692384979277431, "weight_text": 0.033675690122561185, "type": "suit"}, {"source": {"index": 19, "name": "chout_link", "x": 337.49002274708397, "y": 283.0, "type": "suit_node", "degree": 4.5042181103483045}, "target": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "weight": 0.09406790304349646, "weight_text": 0.0857928295979535, "type": "suit"}, {"source": {"index": 21, "name": "dandd", "x": 282.57442402917593, "y": 230.48927399915033, "type": "suit_node", "degree": 6.204204904635891}, "target": {"index": 21, "name": "dandd", "x": 282.57442402917593, "y": 230.48927399915033, "type": "suit_node", "degree": 6.204204904635891}, "weight": 0.19223845606396783, "weight_text": 0.17532740254285822, "type": "suit"}, {"source": {"index": 21, "name": "dandd", "x": 282.57442402917593, "y": 230.48927399915033, "type": "suit_node", "degree": 6.204204904635891}, "target": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "weight": 0.1279356972411772, "weight_text": 0.11668130273758161, "type": "suit"}, {"source": {"index": 21, "name": "dandd", "x": 282.57442402917593, "y": 230.48927399915033, "type": "suit_node", "degree": 6.204204904635891}, "target": {"index": 2, "name": "session_start", "x": 386.13423578526897, "y": 226.59839151375556, "type": "suit_node", "degree": 5.295763367353764}, "weight": 0.0446267844434211, "weight_text": 0.040701004161734944, "type": "suit"}, {"source": {"index": 21, "name": "dandd", "x": 282.57442402917593, "y": 230.48927399915033, "type": "suit_node", "degree": 6.204204904635891}, "target": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "weight": 0.08607192196592289, "weight_text": 0.07850024817685465, "type": "suit"}, {"source": {"index": 21, "name": "dandd", "x": 282.57442402917593, "y": 230.48927399915033, "type": "suit_node", "degree": 6.204204904635891}, "target": {"index": 4, "name": "tool", "x": 335.5350555068032, "y": 202.3351314882068, "type": "suit_node", "degree": 8.793596429998576}, "weight": 0.12278645288232093, "weight_text": 0.1119850330266122, "type": "suit"}, {"source": {"index": 21, "name": "dandd", "x": 282.57442402917593, "y": 230.48927399915033, "type": "suit_node", "degree": 6.204204904635891}, "target": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "weight": 0.12173985850043957, "weight_text": 0.11103050666259402, "type": "suit"}, {"source": {"index": 10, "name": "ecom", "x": 410.25039479330866, "y": 124.54505946373123, "type": "suit_node", "degree": 4.234332794242995}, "target": {"index": 8, "name": "funnel", "x": 338.32954059296145, "y": 125.07692133244926, "type": "suit_node", "degree": 4.328873689933302}, "weight": 0.02231339222171055, "weight_text": 0.020350502080867472, "type": "suit"}, {"source": {"index": 10, "name": "ecom", "x": 410.25039479330866, "y": 124.54505946373123, "type": "suit_node", "degree": 4.234332794242995}, "target": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "weight": 0.05036212165613095, "weight_text": 0.04593180863655454, "type": "suit"}, {"source": {"index": 10, "name": "ecom", "x": 410.25039479330866, "y": 124.54505946373123, "type": "suit_node", "degree": 4.234332794242995}, "target": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "weight": 0.035500481433415665, "weight_text": 0.03237753426749647, "type": "suit"}, {"source": {"index": 20, "name": "edit", "x": 422.34784124399624, "y": 180.18519597540111, "type": "suit_node", "degree": 10.368249008285298}, "target": {"index": 20, "name": "edit", "x": 422.34784124399624, "y": 180.18519597540111, "type": "suit_node", "degree": 10.368249008285298}, "weight": 0.11399506007451751, "weight_text": 0.10396701156885953, "type": "suit"}, {"source": {"index": 20, "name": "edit", "x": 422.34784124399624, "y": 180.18519597540111, "type": "suit_node", "degree": 10.368249008285298}, "target": {"index": 5, "name": "preview", "x": 458.0, "y": 205.789176461164, "type": "suit_node", "degree": 7.947744824475501}, "weight": 0.03893331100598652, "weight_text": 0.03550838074147608, "type": "suit"}, {"source": {"index": 20, "name": "edit", "x": 422.34784124399624, "y": 180.18519597540111, "type": "suit_node", "degree": 10.368249008285298}, "target": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "weight": 0.09620295558253443, "weight_text": 0.08774006338055057, "type": "suit"}, {"source": {"index": 20, "name": "edit", "x": 422.34784124399624, "y": 180.18519597540111, "type": "suit_node", "degree": 10.368249008285298}, "target": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "weight": 0.06748440574370997, "weight_text": 0.061547859951891874, "type": "suit"}, {"source": {"index": 20, "name": "edit", "x": 422.34784124399624, "y": 180.18519597540111, "type": "suit_node", "degree": 10.368249008285298}, "target": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "weight": 0.12190731360154058, "weight_text": 0.11118323088083693, "type": "suit"}, {"source": {"index": 15, "name": "first_open", "x": 291.1311449404731, "y": 208.16082286328648, "type": "suit_node", "degree": 4.50802547158971}, "target": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "weight": 0.8250931468999875, "weight_text": 0.7525104043373678, "type": "suit"}, {"source": {"index": 8, "name": "funnel", "x": 338.32954059296145, "y": 125.07692133244926, "type": "suit_node", "degree": 4.328873689933302}, "target": {"index": 10, "name": "ecom", "x": 410.25039479330866, "y": 124.54505946373123, "type": "suit_node", "degree": 4.234332794242995}, "weight": 0.04885502574622179, "weight_text": 0.04455729067236837, "type": "suit"}, {"source": {"index": 8, "name": "funnel", "x": 338.32954059296145, "y": 125.07692133244926, "type": "suit_node", "degree": 4.328873689933302}, "target": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "weight": 0.03181646920919329, "weight_text": 0.029017601466152496, "type": "suit"}, {"source": {"index": 8, "name": "funnel", "x": 338.32954059296145, "y": 125.07692133244926, "type": "suit_node", "degree": 4.328873689933302}, "target": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "weight": 0.027253317704190563, "weight_text": 0.024855866519033255, "type": "suit"}, {"source": {"index": 8, "name": "funnel", "x": 338.32954059296145, "y": 125.07692133244926, "type": "suit_node", "degree": 4.328873689933302}, "target": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "weight": 0.023359986603591912, "weight_text": 0.02130502844488565, "type": "suit"}, {"source": {"index": 14, "name": "login", "x": 319.7919010995886, "y": 256.9056847653726, "type": "suit_node", "degree": 4.228698928622267}, "target": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "weight": 0.2413028006865659, "weight_text": 0.22007559848803024, "type": "suit"}, {"source": {"index": 14, "name": "login", "x": 319.7919010995886, "y": 256.9056847653726, "type": "suit_node", "degree": 4.228698928622267}, "target": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "weight": 0.11843262025369447, "weight_text": 0.10801420335229658, "type": "suit"}, {"source": {"index": 13, "name": "onb", "x": 372.91447506188354, "y": 196.75456606096225, "type": "suit_node", "degree": 5.703845606356579}, "target": {"index": 13, "name": "onb", "x": 372.91447506188354, "y": 196.75456606096225, "type": "suit_node", "degree": 5.703845606356579}, "weight": 0.5652865575417592, "weight_text": 0.5155587797334963, "type": "suit"}, {"source": {"index": 13, "name": "onb", "x": 372.91447506188354, "y": 196.75456606096225, "type": "suit_node", "degree": 5.703845606356579}, "target": {"index": 18, "name": "prov", "x": 388.4167087070837, "y": 210.4249967845844, "type": "suit_node", "degree": 10.178138200352954}, "weight": 0.14120651400343284, "weight_text": 0.12878469703333206, "type": "suit"}, {"source": {"index": 13, "name": "onb", "x": 372.91447506188354, "y": 196.75456606096225, "type": "suit_node", "degree": 5.703845606356579}, "target": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "weight": 0.6177418679616528, "weight_text": 0.5633996410980872, "type": "suit"}, {"source": {"index": 13, "name": "onb", "x": 372.91447506188354, "y": 196.75456606096225, "type": "suit_node", "degree": 5.703845606356579}, "target": {"index": 2, "name": "session_start", "x": 386.13423578526897, "y": 226.59839151375556, "type": "suit_node", "degree": 5.295763367353764}, "weight": 0.17034370159500983, "weight_text": 0.15535871100759802, "type": "suit"}, {"source": {"index": 13, "name": "onb", "x": 372.91447506188354, "y": 196.75456606096225, "type": "suit_node", "degree": 5.703845606356579}, "target": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "weight": 0.20132289529869804, "weight_text": 0.183612691382536, "type": "suit"}, {"source": {"index": 13, "name": "onb", "x": 372.91447506188354, "y": 196.75456606096225, "type": "suit_node", "degree": 5.703845606356579}, "target": {"index": 4, "name": "tool", "x": 335.5350555068032, "y": 202.3351314882068, "type": "suit_node", "degree": 8.793596429998576}, "weight": 0.09021643571817306, "weight_text": 0.08228017257836662, "type": "suit"}, {"source": {"index": 13, "name": "onb", "x": 372.91447506188354, "y": 196.75456606096225, "type": "suit_node", "degree": 5.703845606356579}, "target": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "weight": 0.5106961945828274, "weight_text": 0.46577068458630827, "type": "suit"}, {"source": {"index": 9, "name": "order", "x": 75.0, "y": 50.0, "type": "nice_node", "degree": 4.004630574482791}, "target": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "weight": 0.0007116841796793234, "weight_text": 0.0006490779275323584, "type": "suit"}, {"source": {"index": 9, "name": "order", "x": 75.0, "y": 50.0, "type": "nice_node", "degree": 4.004630574482791}, "target": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "weight": 0.005735337212709842, "weight_text": 0.005230804474819595, "type": "suit"}, {"source": {"index": 9, "name": "order", "x": 75.0, "y": 50.0, "type": "nice_node", "degree": 4.004630574482791}, "target": {"index": 4, "name": "tool", "x": 335.5350555068032, "y": 202.3351314882068, "type": "suit_node", "degree": 8.793596429998576}, "weight": 8.372755055050864e-05, "weight_text": 7.636210912145394e-05, "type": "suit"}, {"source": {"index": 9, "name": "order", "x": 75.0, "y": 50.0, "type": "nice_node", "degree": 4.004630574482791}, "target": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "weight": 0.0003767739774772889, "weight_text": 0.0003436294910465427, "type": "suit"}, {"source": {"index": 3, "name": "phs", "x": 337.49690025222367, "y": 174.4256956503953, "type": "suit_node", "degree": 22.007712479055225}, "target": {"index": 7, "name": "basket", "x": 289.0004161604141, "y": 178.40099272751772, "type": "suit_node", "degree": 5.470001594975655}, "weight": 0.028258048310796667, "weight_text": 0.025772211828490703, "type": "suit"}, {"source": {"index": 3, "name": "phs", "x": 337.49690025222367, "y": 174.4256956503953, "type": "suit_node", "degree": 22.007712479055225}, "target": {"index": 8, "name": "funnel", "x": 338.32954059296145, "y": 125.07692133244926, "type": "suit_node", "degree": 4.328873689933302}, "weight": 0.04550592372420145, "weight_text": 0.041502806307510215, "type": "suit"}, {"source": {"index": 3, "name": "phs", "x": 337.49690025222367, "y": 174.4256956503953, "type": "suit_node", "degree": 22.007712479055225}, "target": {"index": 3, "name": "phs", "x": 337.49690025222367, "y": 174.4256956503953, "type": "suit_node", "degree": 22.007712479055225}, "weight": 0.2694771214468121, "weight_text": 0.2457714482073995, "type": "suit"}, {"source": {"index": 3, "name": "phs", "x": 337.49690025222367, "y": 174.4256956503953, "type": "suit_node", "degree": 22.007712479055225}, "target": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "weight": 0.23108803951940385, "weight_text": 0.21075942117521285, "type": "suit"}, {"source": {"index": 3, "name": "phs", "x": 337.49690025222367, "y": 174.4256956503953, "type": "suit_node", "degree": 22.007712479055225}, "target": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "weight": 0.08251350106752627, "weight_text": 0.07525485853919285, "type": "suit"}, {"source": {"index": 3, "name": "phs", "x": 337.49690025222367, "y": 174.4256956503953, "type": "suit_node", "degree": 22.007712479055225}, "target": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "weight": 0.2341440951144974, "weight_text": 0.21354663815814592, "type": "suit"}, {"source": {"index": 5, "name": "preview", "x": 458.0, "y": 205.789176461164, "type": "suit_node", "degree": 7.947744824475501}, "target": {"index": 5, "name": "preview", "x": 458.0, "y": 205.789176461164, "type": "suit_node", "degree": 7.947744824475501}, "weight": 0.09410976681877171, "weight_text": 0.08583101065251422, "type": "suit"}, {"source": {"index": 5, "name": "preview", "x": 458.0, "y": 205.789176461164, "type": "suit_node", "degree": 7.947744824475501}, "target": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "weight": 0.08598819441537238, "weight_text": 0.07842388606773319, "type": "suit"}, {"source": {"index": 5, "name": "preview", "x": 458.0, "y": 205.789176461164, "type": "suit_node", "degree": 7.947744824475501}, "target": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "weight": 0.04780843136434043, "weight_text": 0.043602764308350195, "type": "suit"}, {"source": {"index": 5, "name": "preview", "x": 458.0, "y": 205.789176461164, "type": "suit_node", "degree": 7.947744824475501}, "target": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "weight": 0.09553313517813036, "weight_text": 0.08712916650757895, "type": "suit"}, {"source": {"index": 18, "name": "prov", "x": 388.4167087070837, "y": 210.4249967845844, "type": "suit_node", "degree": 10.178138200352954}, "target": {"index": 13, "name": "onb", "x": 372.91447506188354, "y": 196.75456606096225, "type": "suit_node", "degree": 5.703845606356579}, "weight": 0.02239711977226106, "weight_text": 0.020426864189988927, "type": "suit"}, {"source": {"index": 18, "name": "prov", "x": 388.4167087070837, "y": 210.4249967845844, "type": "suit_node", "degree": 10.178138200352954}, "target": {"index": 18, "name": "prov", "x": 388.4167087070837, "y": 210.4249967845844, "type": "suit_node", "degree": 10.178138200352954}, "weight": 0.4007200569347344, "weight_text": 0.36546905425527854, "type": "suit"}, {"source": {"index": 18, "name": "prov", "x": 388.4167087070837, "y": 210.4249967845844, "type": "suit_node", "degree": 10.178138200352954}, "target": {"index": 12, "name": "prparam", "x": 410.7163451035385, "y": 242.50333251730862, "type": "suit_node", "degree": 5.448520874458266}, "weight": 0.10721312847992631, "weight_text": 0.09778168073002176, "type": "suit"}, {"source": {"index": 18, "name": "prov", "x": 388.4167087070837, "y": 210.4249967845844, "type": "suit_node", "degree": 10.178138200352954}, "target": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "weight": 0.641478628542722, "weight_text": 0.5850482990340193, "type": "suit"}, {"source": {"index": 18, "name": "prov", "x": 388.4167087070837, "y": 210.4249967845844, "type": "suit_node", "degree": 10.178138200352954}, "target": {"index": 2, "name": "session_start", "x": 386.13423578526897, "y": 226.59839151375556, "type": "suit_node", "degree": 5.295763367353764}, "weight": 0.10482689328923682, "weight_text": 0.09560536062006032, "type": "suit"}, {"source": {"index": 18, "name": "prov", "x": 388.4167087070837, "y": 210.4249967845844, "type": "suit_node", "degree": 10.178138200352954}, "target": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "weight": 0.21760790388077197, "weight_text": 0.19846512160665877, "type": "suit"}, {"source": {"index": 18, "name": "prov", "x": 388.4167087070837, "y": 210.4249967845844, "type": "suit_node", "degree": 10.178138200352954}, "target": {"index": 4, "name": "tool", "x": 335.5350555068032, "y": 202.3351314882068, "type": "suit_node", "degree": 8.793596429998576}, "weight": 0.0962448193578097, "weight_text": 0.0877782444351113, "type": "suit"}, {"source": {"index": 18, "name": "prov", "x": 388.4167087070837, "y": 210.4249967845844, "type": "suit_node", "degree": 10.178138200352954}, "target": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "weight": 0.6111273914681625, "weight_text": 0.5573670344774923, "type": "suit"}, {"source": {"index": 12, "name": "prparam", "x": 410.7163451035385, "y": 242.50333251730862, "type": "suit_node", "degree": 5.448520874458266}, "target": {"index": 11, "name": "auth", "x": 362.595812949768, "y": 244.881406490221, "type": "suit_node", "degree": 5.545660036941694}, "weight": 0.27990120149035036, "weight_text": 0.2552785307930205, "type": "suit"}, {"source": {"index": 12, "name": "prparam", "x": 410.7163451035385, "y": 242.50333251730862, "type": "suit_node", "degree": 5.448520874458266}, "target": {"index": 12, "name": "prparam", "x": 410.7163451035385, "y": 242.50333251730862, "type": "suit_node", "degree": 5.448520874458266}, "weight": 0.25976472558295305, "weight_text": 0.23691344354931082, "type": "suit"}, {"source": {"index": 12, "name": "prparam", "x": 410.7163451035385, "y": 242.50333251730862, "type": "suit_node", "degree": 5.448520874458266}, "target": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "weight": 0.2526897475614351, "weight_text": 0.23046084532854796, "type": "suit"}, {"source": {"index": 12, "name": "prparam", "x": 410.7163451035385, "y": 242.50333251730862, "type": "suit_node", "degree": 5.448520874458266}, "target": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "weight": 0.1807259178632729, "weight_text": 0.16482761253865832, "type": "suit"}, {"source": {"index": 0, "name": "reg", "x": 179.5558844329864, "y": 266.2506771221699, "type": "suit_node", "degree": 4.568325841521161}, "target": {"index": 0, "name": "reg", "x": 179.5558844329864, "y": 266.2506771221699, "type": "suit_node", "degree": 4.568325841521161}, "weight": 0.1860426173232302, "weight_text": 0.16967660646787064, "type": "suit"}, {"source": {"index": 0, "name": "reg", "x": 179.5558844329864, "y": 266.2506771221699, "type": "suit_node", "degree": 4.568325841521161}, "target": {"index": 6, "name": "sign_up", "x": 215.35571013982084, "y": 240.6645252828419, "type": "suit_node", "degree": 4.094155014483408}, "weight": 0.1512119562942186, "weight_text": 0.1379099690733458, "type": "suit"}, {"source": {"index": 0, "name": "reg", "x": 179.5558844329864, "y": 266.2506771221699, "type": "suit_node", "degree": 4.568325841521161}, "target": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "weight": 0.06015824507054046, "weight_text": 0.05486617540376465, "type": "suit"}, {"source": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "target": {"index": 11, "name": "auth", "x": 362.595812949768, "y": 244.881406490221, "type": "suit_node", "degree": 5.545660036941694}, "weight": 0.18826139741281867, "weight_text": 0.17170020235958916, "type": "suit"}, {"source": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "target": {"index": 7, "name": "basket", "x": 289.0004161604141, "y": 178.40099272751772, "type": "suit_node", "degree": 5.470001594975655}, "weight": 0.10591535144639343, "weight_text": 0.09659806803863923, "type": "suit"}, {"source": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "target": {"index": 19, "name": "chout_link", "x": 337.49002274708397, "y": 283.0, "type": "suit_node", "degree": 4.5042181103483045}, "weight": 0.07296856030476828, "weight_text": 0.0665495780993471, "type": "suit"}, {"source": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "target": {"index": 21, "name": "dandd", "x": 282.57442402917593, "y": 230.48927399915033, "type": "suit_node", "degree": 6.204204904635891}, "weight": 0.13936450789132163, "weight_text": 0.12710473063266006, "type": "suit"}, {"source": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "target": {"index": 10, "name": "ecom", "x": 410.25039479330866, "y": 124.54505946373123, "type": "suit_node", "degree": 4.234332794242995}, "weight": 0.0271277263783648, "weight_text": 0.024741323355351074, "type": "suit"}, {"source": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "target": {"index": 20, "name": "edit", "x": 422.34784124399624, "y": 180.18519597540111, "type": "suit_node", "degree": 10.368249008285298}, "weight": 0.13484322016159417, "weight_text": 0.12298117674010156, "type": "suit"}, {"source": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "target": {"index": 8, "name": "funnel", "x": 338.32954059296145, "y": 125.07692133244926, "type": "suit_node", "degree": 4.328873689933302}, "weight": 0.037133168669150576, "weight_text": 0.03386659539536482, "type": "suit"}, {"source": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "target": {"index": 13, "name": "onb", "x": 372.91447506188354, "y": 196.75456606096225, "type": "suit_node", "degree": 5.703845606356579}, "weight": 0.6134717628835769, "weight_text": 0.559505173532893, "type": "suit"}, {"source": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "target": {"index": 9, "name": "order", "x": 75.0, "y": 50.0, "type": "nice_node", "degree": 4.004630574482791}, "weight": 0.003642148448947126, "weight_text": 0.0033217517467832463, "type": "nice_target"}, {"source": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "target": {"index": 3, "name": "phs", "x": 337.49690025222367, "y": 174.4256956503953, "type": "suit_node", "degree": 22.007712479055225}, "weight": 0.24440072005693472, "weight_text": 0.22290099652552403, "type": "suit"}, {"source": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "target": {"index": 5, "name": "preview", "x": 458.0, "y": 205.789176461164, "type": "suit_node", "degree": 7.947744824475501}, "weight": 0.10327793360405241, "weight_text": 0.09419266160131343, "type": "suit"}, {"source": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "target": {"index": 18, "name": "prov", "x": 388.4167087070837, "y": 210.4249967845844, "type": "suit_node", "degree": 10.178138200352954}, "weight": 0.5387449240172478, "weight_text": 0.49135199114199535, "type": "suit"}, {"source": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "target": {"index": 12, "name": "prparam", "x": 410.7163451035385, "y": 242.50333251730862, "type": "suit_node", "degree": 5.448520874458266}, "weight": 0.23083685686775232, "weight_text": 0.2105303348478485, "type": "suit"}, {"source": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "target": {"index": 0, "name": "reg", "x": 179.5558844329864, "y": 266.2506771221699, "type": "suit_node", "degree": 4.568325841521161}, "weight": 0.07857830619165236, "weight_text": 0.07166583941048452, "type": "suit"}, {"source": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "target": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "weight": 0.9925063842257296, "weight_text": 0.905196441525715, "type": "suit"}, {"source": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "target": {"index": 2, "name": "session_start", "x": 386.13423578526897, "y": 226.59839151375556, "type": "suit_node", "degree": 5.295763367353764}, "weight": 0.36132624440072003, "weight_text": 0.32954068191363445, "type": "suit"}, {"source": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "target": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "weight": 0.6511910244065809, "weight_text": 0.593906303692108, "type": "suit"}, {"source": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "target": {"index": 4, "name": "tool", "x": 335.5350555068032, "y": 202.3351314882068, "type": "suit_node", "degree": 8.793596429998576}, "weight": 0.4006363293841838, "weight_text": 0.36539269214615705, "type": "suit"}, {"source": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "target": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "weight": 1.0, "weight_text": 0.9120308502920851, "type": "suit"}, {"source": {"index": 2, "name": "session_start", "x": 386.13423578526897, "y": 226.59839151375556, "type": "suit_node", "degree": 5.295763367353764}, "target": {"index": 11, "name": "auth", "x": 362.595812949768, "y": 244.881406490221, "type": "suit_node", "degree": 5.545660036941694}, "weight": 0.08046217607903881, "weight_text": 0.07338398686571723, "type": "suit"}, {"source": {"index": 2, "name": "session_start", "x": 386.13423578526897, "y": 226.59839151375556, "type": "suit_node", "degree": 5.295763367353764}, "target": {"index": 21, "name": "dandd", "x": 282.57442402917593, "y": 230.48927399915033, "type": "suit_node", "degree": 6.204204904635891}, "weight": 0.047515384937413654, "weight_text": 0.043335496926425104, "type": "suit"}, {"source": {"index": 2, "name": "session_start", "x": 386.13423578526897, "y": 226.59839151375556, "type": "suit_node", "degree": 5.295763367353764}, "target": {"index": 9, "name": "order", "x": 75.0, "y": 50.0, "type": "nice_node", "degree": 4.004630574482791}, "weight": 4.186377527525432e-05, "weight_text": 3.818105456072697e-05, "type": "nice_target"}, {"source": {"index": 2, "name": "session_start", "x": 386.13423578526897, "y": 226.59839151375556, "type": "suit_node", "degree": 5.295763367353764}, "target": {"index": 18, "name": "prov", "x": 388.4167087070837, "y": 210.4249967845844, "type": "suit_node", "degree": 10.178138200352954}, "weight": 0.47741449323900026, "weight_text": 0.43541674621053034, "type": "suit"}, {"source": {"index": 2, "name": "session_start", "x": 386.13423578526897, "y": 226.59839151375556, "type": "suit_node", "degree": 5.295763367353764}, "target": {"index": 12, "name": "prparam", "x": 410.7163451035385, "y": 242.50333251730862, "type": "suit_node", "degree": 5.448520874458266}, "weight": 0.05961401599196215, "weight_text": 0.0543698216944752, "type": "suit"}, {"source": {"index": 2, "name": "session_start", "x": 386.13423578526897, "y": 226.59839151375556, "type": "suit_node", "degree": 5.295763367353764}, "target": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "weight": 0.11872566668062125, "weight_text": 0.10828147073422167, "type": "suit"}, {"source": {"index": 2, "name": "session_start", "x": 386.13423578526897, "y": 226.59839151375556, "type": "suit_node", "degree": 5.295763367353764}, "target": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "weight": 0.17206011638129526, "weight_text": 0.15692413424458784, "type": "suit"}, {"source": {"index": 2, "name": "session_start", "x": 386.13423578526897, "y": 226.59839151375556, "type": "suit_node", "degree": 5.295763367353764}, "target": {"index": 4, "name": "tool", "x": 335.5350555068032, "y": 202.3351314882068, "type": "suit_node", "degree": 8.793596429998576}, "weight": 0.18901494536777327, "weight_text": 0.17238746134168226, "type": "suit"}, {"source": {"index": 2, "name": "session_start", "x": 386.13423578526897, "y": 226.59839151375556, "type": "suit_node", "degree": 5.295763367353764}, "target": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "weight": 0.24088416293381337, "weight_text": 0.21969378794242297, "type": "suit"}, {"source": {"index": 6, "name": "sign_up", "x": 215.35571013982084, "y": 240.6645252828419, "type": "suit_node", "degree": 4.094155014483408}, "target": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "weight": 0.1513375476200444, "weight_text": 0.138024512237028, "type": "suit"}, {"source": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "target": {"index": 11, "name": "auth", "x": 362.595812949768, "y": 244.881406490221, "type": "suit_node", "degree": 5.545660036941694}, "weight": 0.13249884874617993, "weight_text": 0.12084303768470085, "type": "suit"}, {"source": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "target": {"index": 21, "name": "dandd", "x": 282.57442402917593, "y": 230.48927399915033, "type": "suit_node", "degree": 6.204204904635891}, "weight": 0.06229329760957843, "weight_text": 0.05681340918636173, "type": "suit"}, {"source": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "target": {"index": 20, "name": "edit", "x": 422.34784124399624, "y": 180.18519597540111, "type": "suit_node", "degree": 10.368249008285298}, "weight": 0.0761502072256876, "weight_text": 0.06945133824596235, "type": "suit"}, {"source": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "target": {"index": 14, "name": "login", "x": 319.7919010995886, "y": 256.9056847653726, "type": "suit_node", "degree": 4.228698928622267}, "weight": 0.36362875204085904, "weight_text": 0.33164063991447446, "type": "suit"}, {"source": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "target": {"index": 13, "name": "onb", "x": 372.91447506188354, "y": 196.75456606096225, "type": "suit_node", "degree": 5.703845606356579}, "weight": 0.1739439862686817, "weight_text": 0.15864228169982056, "type": "suit"}, {"source": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "target": {"index": 9, "name": "order", "x": 75.0, "y": 50.0, "type": "nice_node", "degree": 4.004630574482791}, "weight": 0.0024699627412400047, "weight_text": 0.002252682219082891, "type": "nice_target"}, {"source": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "target": {"index": 3, "name": "phs", "x": 337.49690025222367, "y": 174.4256956503953, "type": "suit_node", "degree": 22.007712479055225}, "weight": 0.07150332817013438, "weight_text": 0.06521324118972166, "type": "suit"}, {"source": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "target": {"index": 18, "name": "prov", "x": 388.4167087070837, "y": 210.4249967845844, "type": "suit_node", "degree": 10.178138200352954}, "weight": 0.22669234311550215, "weight_text": 0.20675041044633652, "type": "suit"}, {"source": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "target": {"index": 0, "name": "reg", "x": 179.5558844329864, "y": 266.2506771221699, "type": "suit_node", "degree": 4.568325841521161}, "weight": 0.04663624565663331, "weight_text": 0.04253369478064984, "type": "suit"}, {"source": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "target": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "weight": 0.6294218612634488, "weight_text": 0.57405215532053, "type": "suit"}, {"source": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "target": {"index": 2, "name": "session_start", "x": 386.13423578526897, "y": 226.59839151375556, "type": "suit_node", "degree": 5.295763367353764}, "weight": 0.09143048520115543, "weight_text": 0.0833874231606277, "type": "suit"}, {"source": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "target": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "weight": 0.7523339054715954, "weight_text": 0.6861517315108243, "type": "suit"}, {"source": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "target": {"index": 4, "name": "tool", "x": 335.5350555068032, "y": 202.3351314882068, "type": "suit_node", "degree": 8.793596429998576}, "weight": 0.10658517185079751, "weight_text": 0.09720896491161087, "type": "suit"}, {"source": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "target": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "weight": 0.7408632310461757, "weight_text": 0.6756901225611851, "type": "suit"}, {"source": {"index": 4, "name": "tool", "x": 335.5350555068032, "y": 202.3351314882068, "type": "suit_node", "degree": 8.793596429998576}, "target": {"index": 11, "name": "auth", "x": 362.595812949768, "y": 244.881406490221, "type": "suit_node", "degree": 5.545660036941694}, "weight": 0.1431741114413698, "weight_text": 0.13057920659768624, "type": "suit"}, {"source": {"index": 4, "name": "tool", "x": 335.5350555068032, "y": 202.3351314882068, "type": "suit_node", "degree": 8.793596429998576}, "target": {"index": 7, "name": "basket", "x": 289.0004161604141, "y": 178.40099272751772, "type": "suit_node", "degree": 5.470001594975655}, "weight": 0.1582032067651861, "weight_text": 0.14428620518498722, "type": "suit"}, {"source": {"index": 4, "name": "tool", "x": 335.5350555068032, "y": 202.3351314882068, "type": "suit_node", "degree": 8.793596429998576}, "target": {"index": 21, "name": "dandd", "x": 282.57442402917593, "y": 230.48927399915033, "type": "suit_node", "degree": 6.204204904635891}, "weight": 0.039310084983463806, "weight_text": 0.03585201023252262, "type": "suit"}, {"source": {"index": 4, "name": "tool", "x": 335.5350555068032, "y": 202.3351314882068, "type": "suit_node", "degree": 8.793596429998576}, "target": {"index": 13, "name": "onb", "x": 372.91447506188354, "y": 196.75456606096225, "type": "suit_node", "degree": 5.703845606356579}, "weight": 0.03558420898396617, "weight_text": 0.03245389637661792, "type": "suit"}, {"source": {"index": 4, "name": "tool", "x": 335.5350555068032, "y": 202.3351314882068, "type": "suit_node", "degree": 8.793596429998576}, "target": {"index": 18, "name": "prov", "x": 388.4167087070837, "y": 210.4249967845844, "type": "suit_node", "degree": 10.178138200352954}, "weight": 0.25482480010047304, "weight_text": 0.23240807911114506, "type": "suit"}, {"source": {"index": 4, "name": "tool", "x": 335.5350555068032, "y": 202.3351314882068, "type": "suit_node", "degree": 8.793596429998576}, "target": {"index": 12, "name": "prparam", "x": 410.7163451035385, "y": 242.50333251730862, "type": "suit_node", "degree": 5.448520874458266}, "weight": 0.046719973207183824, "weight_text": 0.0426100568897713, "type": "suit"}, {"source": {"index": 4, "name": "tool", "x": 335.5350555068032, "y": 202.3351314882068, "type": "suit_node", "degree": 8.793596429998576}, "target": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "weight": 0.3701176372085234, "weight_text": 0.3375587033713871, "type": "suit"}, {"source": {"index": 4, "name": "tool", "x": 335.5350555068032, "y": 202.3351314882068, "type": "suit_node", "degree": 8.793596429998576}, "target": {"index": 2, "name": "session_start", "x": 386.13423578526897, "y": 226.59839151375556, "type": "suit_node", "degree": 5.295763367353764}, "weight": 0.1152091095574999, "weight_text": 0.10507426215112062, "type": "suit"}, {"source": {"index": 4, "name": "tool", "x": 335.5350555068032, "y": 202.3351314882068, "type": "suit_node", "degree": 8.793596429998576}, "target": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "weight": 0.1421693808347637, "weight_text": 0.1296628612882288, "type": "suit"}, {"source": {"index": 4, "name": "tool", "x": 335.5350555068032, "y": 202.3351314882068, "type": "suit_node", "degree": 8.793596429998576}, "target": {"index": 4, "name": "tool", "x": 335.5350555068032, "y": 202.3351314882068, "type": "suit_node", "degree": 8.793596429998576}, "weight": 0.41842843387616696, "weight_text": 0.38161964033446605, "type": "suit"}, {"source": {"index": 4, "name": "tool", "x": 335.5350555068032, "y": 202.3351314882068, "type": "suit_node", "degree": 8.793596429998576}, "target": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "weight": 0.33244023946079454, "weight_text": 0.30319575426673284, "type": "suit"}, {"source": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "target": {"index": 11, "name": "auth", "x": 362.595812949768, "y": 244.881406490221, "type": "suit_node", "degree": 5.545660036941694}, "weight": 0.3108803951940386, "weight_text": 0.28353251116795847, "type": "suit"}, {"source": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "target": {"index": 7, "name": "basket", "x": 289.0004161604141, "y": 178.40099272751772, "type": "suit_node", "degree": 5.470001594975655}, "weight": 0.17390212249340645, "weight_text": 0.15860410064525982, "type": "suit"}, {"source": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "target": {"index": 19, "name": "chout_link", "x": 337.49002274708397, "y": 283.0, "type": "suit_node", "degree": 4.5042181103483045}, "weight": 0.10110101728973918, "weight_text": 0.09220724676415562, "type": "suit"}, {"source": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "target": {"index": 21, "name": "dandd", "x": 282.57442402917593, "y": 230.48927399915033, "type": "suit_node", "degree": 6.204204904635891}, "weight": 0.17268807301042408, "weight_text": 0.15749685006299874, "type": "suit"}, {"source": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "target": {"index": 10, "name": "ecom", "x": 410.25039479330866, "y": 124.54505946373123, "type": "suit_node", "degree": 4.234332794242995}, "weight": 0.04048227069117093, "weight_text": 0.03692107976022298, "type": "suit"}, {"source": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "target": {"index": 20, "name": "edit", "x": 422.34784124399624, "y": 180.18519597540111, "type": "suit_node", "degree": 10.368249008285298}, "weight": 0.08590446686482187, "weight_text": 0.07834752395861173, "type": "suit"}, {"source": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "target": {"index": 8, "name": "funnel", "x": 338.32954059296145, "y": 125.07692133244926, "type": "suit_node", "degree": 4.328873689933302}, "weight": 0.02633231464813497, "weight_text": 0.02401588331869726, "type": "suit"}, {"source": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "target": {"index": 13, "name": "onb", "x": 372.91447506188354, "y": 196.75456606096225, "type": "suit_node", "degree": 5.703845606356579}, "weight": 0.48666638757483144, "weight_text": 0.44385475926845097, "type": "suit"}, {"source": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "target": {"index": 9, "name": "order", "x": 75.0, "y": 50.0, "type": "nice_node", "degree": 4.004630574482791}, "weight": 0.0007954117302298321, "weight_text": 0.0007254400366538124, "type": "nice_target"}, {"source": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "target": {"index": 3, "name": "phs", "x": 337.49690025222367, "y": 174.4256956503953, "type": "suit_node", "degree": 22.007712479055225}, "weight": 0.23841420019257337, "weight_text": 0.21744110572334008, "type": "suit"}, {"source": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "target": {"index": 5, "name": "preview", "x": 458.0, "y": 205.789176461164, "type": "suit_node", "degree": 7.947744824475501}, "weight": 0.08356009544940762, "weight_text": 0.07620938490321102, "type": "suit"}, {"source": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "target": {"index": 18, "name": "prov", "x": 388.4167087070837, "y": 210.4249967845844, "type": "suit_node", "degree": 10.178138200352954}, "weight": 0.5957215221668689, "weight_text": 0.5433164063991447, "type": "suit"}, {"source": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "target": {"index": 12, "name": "prparam", "x": 410.7163451035385, "y": 242.50333251730862, "type": "suit_node", "degree": 5.448520874458266}, "weight": 0.31544354669904134, "weight_text": 0.2876942461150777, "type": "suit"}, {"source": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "target": {"index": 0, "name": "reg", "x": 179.5558844329864, "y": 266.2506771221699, "type": "suit_node", "degree": 4.568325841521161}, "weight": 0.12705655796039686, "weight_text": 0.11587950059180635, "type": "suit"}, {"source": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "target": {"index": 17, "name": "screen_view", "x": 353.86956422164104, "y": 210.7129864078698, "type": "suit_node", "degree": 34.0}, "weight": 0.9943483903378406, "weight_text": 0.9068764079263869, "type": "suit"}, {"source": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "target": {"index": 2, "name": "session_start", "x": 386.13423578526897, "y": 226.59839151375556, "type": "suit_node", "degree": 5.295763367353764}, "weight": 0.40905094821451, "weight_text": 0.3730670841128632, "type": "suit"}, {"source": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "target": {"index": 1, "name": "sys", "x": 331.1701331793581, "y": 226.22473472918267, "type": "suit_node", "degree": 16.232151279153328}, "weight": 0.6679783982919579, "weight_text": 0.6092169065709595, "type": "suit"}, {"source": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "target": {"index": 4, "name": "tool", "x": 335.5350555068032, "y": 202.3351314882068, "type": "suit_node", "degree": 8.793596429998576}, "weight": 0.4111441369782727, "weight_text": 0.37497613684089953, "type": "suit"}, {"source": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "target": {"index": 16, "name": "user_engagement", "x": 345.53236867924517, "y": 217.68759121007795, "type": "suit_node", "degree": 30.5656829840108}, "weight": 0.49855569975300373, "weight_text": 0.45469817876369745, "type": "suit"}]);
+
+    if (!1) {
+      $('.percent-checkbox').hide();
+    }
+
+  </script>
+
+  <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js" integrity="sha384-q8i/X+965DzO0rT7abK41JStQIAqVgRVzpbzo5smXKp4YfRvH+8abtTE1Pi6jizo" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js" integrity="sha384-UO2eT0CpHqdSJQ6hJty5KVphtPhzWj9WO1clHTMGa3JDZwrnQq4sF86dIHNDz0W1" crossorigin="anonymous"></script>
+  <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js" integrity="sha384-JjSmVgyd0p3pXB1rRibZUAYoIIy6OrQ6VrjIEaFf/nJGzIxFDsf4x0xIM+B07jRM" crossorigin="anonymous"></script>
+  <script src="https://code.jquery.com/jquery-3.4.1.js"></script>
+</body>
+</html>

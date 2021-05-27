@@ -1,0 +1,835 @@
+
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Graph Editor</title>
+  <script src="https://code.jquery.com/jquery-3.4.1.js"></script>
+  <script src="https://d3js.org/d3.v5.min.js"></script>
+  <script type="text/javascript">
+
+    var node_params;
+    var mynodes = [];
+    var mylinks = [];
+
+
+    let maxDegree = 0;
+    let maxWeigth = 0;
+    let width = 800;
+    let height = 800;
+
+
+    function initialize(initNodes, initNodeParams, initLinks) {
+      mynodes = initNodes;
+      node_params = initNodeParams;
+      mylinks = initLinks;
+
+      if (!0) {
+        
+        let rawNodes = [];
+
+        let delta = 0.1;
+        for (i = 0; i < mynodes.length; i++) {
+          let newRawNode = null;
+
+          //fixing correct positions for target nodes
+          if (mynodes[i].type == 'bad_node') {
+            newRawNode = {
+              'index': mynodes[i].index,
+              'name': mynodes[i].name,
+              'type': mynodes[i].type,
+              'degree': mynodes[i].degree,
+              'fx': width * (1 - delta),
+              'fy': height / 2
+            };
+          } else if (mynodes[i].type == 'nice_node') {
+            newRawNode = {
+              'index': mynodes[i].index,
+              'name': mynodes[i].name,
+              'type': mynodes[i].type,
+              'degree': mynodes[i].degree,
+              'fx': width * delta,
+              'fy': height / 2
+            };
+          } else {
+            //for non-target nodes there x-s and y-s will be added after forceSimulation
+            newRawNode = {
+              'index': mynodes[i].index,
+              'name': mynodes[i].name,
+              'type': mynodes[i].type,
+              'degree': mynodes[i].degree
+            };
+          }
+          //needed for normalization later
+          if (mynodes[i].degree > maxDegree) {
+            maxDegree = mynodes[i].degree;
+          }
+
+          rawNodes.push(newRawNode);
+        }
+        
+        var layout = d3
+          .forceSimulation(rawNodes)
+          .tick(5)
+          ;
+
+
+        let maxX = 0,
+            maxY = 0,
+            minX = 0,
+            minY = 0;
+
+        for (let i = 0; i < rawNodes.length; i++) {
+          if (rawNodes[i].type == 'suit_node') {
+            if (rawNodes[i].x > maxX) {
+              maxX = rawNodes[i].x;
+            }
+            if (rawNodes[i].x < minX) {
+              minX = rawNodes[i].x;
+            }
+            if (rawNodes[i].y > maxY) {
+              maxY = rawNodes[i].y;
+            }
+            if (rawNodes[i].y < minY) {
+              minY = rawNodes[i].y;
+            }
+          }
+        }
+
+        let offsetMaxX = -minX + maxX;
+        let offsetMaxY = -minY + maxY;
+
+        //Coordinates now have some unpredicted values. I set them so they fill my viewbox with some padding from borders.
+        //At first I normalize them, then multiply by width and height.
+
+        for (let i = 0; i < rawNodes.length; i++) {
+
+          if (rawNodes[i].type == 'suit_node') {
+            //x, y >= 0
+            rawNodes[i].x += -minX;
+            rawNodes[i].y += -minY;
+
+            //x, y from [0, 1 - 2 * delta]
+            rawNodes[i].x = rawNodes[i].x / offsetMaxX * (1 - 2 * delta);
+            rawNodes[i].y = rawNodes[i].y / offsetMaxY * (1 - 2 * delta);
+
+            //x, y from [delta, 1 - delta]
+            rawNodes[i].x += delta;
+            rawNodes[i].y += delta;
+
+            //x, y from [(width | height) * delta, (width | height) * (1 - delta)]
+
+            rawNodes[i].x *= width;
+            rawNodes[i].y *= height;
+
+          }
+
+        }
+
+        for (let i = 0; i < mynodes.length; i++) {
+          mynodes[i].x = rawNodes[i].x;
+          mynodes[i].y = rawNodes[i].y;
+        }
+
+        for (let i = 0; i < mylinks.length;  i++) {
+          mylinks[i].source.x = rawNodes[mylinks[i].source.index].x;
+          mylinks[i].source.y = rawNodes[mylinks[i].source.index].y;
+          mylinks[i].target.x = rawNodes[mylinks[i].target.index].x;
+          mylinks[i].target.y = rawNodes[mylinks[i].target.index].y;
+          if (mylinks[i].weight > maxWeigth) {
+            maxWeigth = mylinks[i].weight;
+          }
+        }
+      } else {
+        // if layout_dump was used:
+        for (i = 0; i < mynodes.length; i++) {
+          if (mynodes[i].degree > maxDegree) {
+            maxDegree = mynodes[i].degree;
+          }
+        }
+        for (let i = 0; i < mylinks.length;  i++) {
+          if (mylinks[i].weight > maxWeigth) {
+            maxWeigth = mylinks[i].weight;
+          }
+        } 
+      }
+
+      
+      
+      
+      makeCheckboxes();
+      setLinkThreshold();
+      displayingWeights();
+    }
+
+    function drawGraph(nodes, links) {
+      zoom = d3.zoom()
+          .scaleExtent([0.5, 8])
+          .translateExtent([[0, 0], [width, height]])
+          .extent([[0, 0], [width, height]])
+          .on("zoom", zoomed)
+          ;
+
+      var svg = d3.select("#freakingGraph").append("svg")
+        .attr("viewBox", [0, 0, width, height])
+        .call(zoom)
+        ;
+
+      //I append all elemets to maingroup so zoom works properly
+      var maingroup = svg.append('g');
+
+      function zoomed() {
+        maingroup.attr("transform", d3.event.transform);
+      }
+
+
+      function calcMarkers(d) {
+
+          let dist = Math.sqrt((nodes[whereEquals(d.target.index)].x - nodes[whereEquals(d.source.index)].x) ** 2 + (nodes[whereEquals(d.target.index)].y - nodes[whereEquals(d.source.index)].y) ** 2);
+          if (dist > 0 && dist <= 200){
+              return - Math.sqrt((0.5 - (d.target.degree ) / 2 / dist)) * (d.target.degree) / 2;
+
+          } else {
+              return 0;
+          }
+      }
+
+      var path = maingroup.append("g").selectAll("path")
+          .data(links)
+          .enter()
+          .append("path")
+          .attr("class", function(d) { return "link " + d.type; })
+          .attr("stroke-width", function(d) { return Math.max(d.weight * 20, 1); })
+          .attr("id", function(d,i) { return "link_"+i; })
+          .attr("d", linkArc)
+          ;
+
+      let textMarkersSelection = maingroup.append("g").selectAll("text")
+          .data(links)
+          .enter();
+
+      textMarkersSelection.append("text")
+          .style("font-size", "13px")
+          .attr("dy", "4.2px")
+          .append("textPath")
+          .attr("xlink:href", function(d,i) { return "#link_"+i; })
+          .attr("startOffset", "35%")
+          .text("➤")
+          ;
+
+      textMarkersSelection.append("text")
+          .style("font-size", "13px")
+          .attr("dy", "4.2px")
+          .append("textPath")
+          .attr("xlink:href", function(d,i) { return "#link_"+i; })
+          .attr("startOffset", "65%")
+          .text("➤")
+          ;
+
+      var edgetext = maingroup.append("g").selectAll("text")
+          .data(links)
+          .enter().append("text")
+          .append("textPath")
+          .attr("xlink:href",function(d,i){return "#link_"+i;})
+          .style("text-anchor","middle")
+          .attr("startOffset", "50%")
+          .attr("id", function(d,i) { return "node_text"+i; })
+          ;
+
+      function whereEquals(index) {
+        for (var i = 0; i < nodes.length; i++) {
+          if (index == nodes[i].index) {
+            return i;
+          }
+        }
+      }
+
+
+        function roundToSignificantFigures(num, n) {
+            if(num == 0) {
+                return 0;
+            }
+
+            d = Math.ceil(Math.log10(num < 0 ? -num: num));
+            power = n - d;
+
+            magnitude = Math.pow(10, power);
+            shifted = Math.round(num*magnitude);
+            return shifted/magnitude;
+        };
+
+
+
+      function displayingWeights() {
+        d3.selectAll("#show-weights").each(function(d) {
+          cb = d3.select(this);
+          if (cb.property("checked")) {
+            edgetext = edgetext.text(function(d) {
+                if ($('#show-percents')[0].checked) {
+                    if (d['weight_text'] > 1) {
+                      return d['weight_text']
+                    } else {
+                      return roundToSignificantFigures(d['weight_text'] * 100, 2) + "%";
+                    };
+                } else {
+                    if (d['weight_text'] > 1) {
+                      return d['weight_text']
+                    } else {
+                      return roundToSignificantFigures(d['weight_text'], 2);
+                    };
+                }
+            })
+          } else {
+            edgetext = edgetext.text(function(d) { return ; })
+          }
+
+
+        })
+      };
+
+
+
+        d3.selectAll("#show-weights").on("change", displayingWeights);
+        d3.selectAll("#show-percents").on("change", displayingWeights);
+
+        function dragstarted(d) {
+          d3.select(this).raise().classed("active", true);
+        }
+
+        function dragged(d) {
+          d3.select(this)
+          .attr("cx", d.x = d3.event.x)
+          .attr("cy", d.y = d3.event.y);
+        }
+
+        function dragended(d) {
+
+          d3.select(this).classed("active", false);
+          path = path.attr("d", linkArc);
+
+          text = text
+            .attr('x', function(d) { return d.x; })
+            .attr('y', function(d) { return d.y; })
+            ;
+          defs.attr("refY", function(d) { return calcMarkers(d); });
+          defs.append("path")
+            .attr("d", "M0,-5L10,0L0,5");
+        };
+
+        var circle = maingroup.append("g").selectAll("circle")
+            .data(nodes)
+            .enter().append("circle")
+            .attr("class", function(d) { return "circle " + d.type; })
+            .attr("r", function(d) { return d.degree; })
+            .attr('cx', function(d) { return d.x; })
+            .attr('cy', function(d) { return d.y; })
+            .style("cursor", "default")
+            .call(d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended));
+
+
+        var text = maingroup.append("g").selectAll("text")
+          .data(nodes)
+          .enter().append("text")
+          .attr('x', function(d) { return d.x; })
+          .attr('y', function(d) { return d.y; })
+          .attr('id', function(d) { return "node-name" + d.index })
+          .attr('class', 'node-name')
+          .text(function(d) { return d.name; })
+          ;
+
+        function linkArc(d) {
+          var dx = nodes[whereEquals(d.target.index)].x - nodes[whereEquals(d.source.index)].x,
+              dy = nodes[whereEquals(d.target.index)].y - nodes[whereEquals(d.source.index)].y,
+              dr = dx * dx + dy * dy;
+              dr = Math.sqrt(dr);
+            if (dr > 200) {
+              dr *= 5
+            } else {
+              dr /= 2
+            };
+            if (dr > 0) {
+              return "M" + nodes[whereEquals(d.source.index)].x + "," + nodes[whereEquals(d.source.index)].y + "A" + (dr * 1.1) + "," + (dr * 1.1) + " 0 0,1 " + nodes[whereEquals(d.target.index)].x + "," + nodes[whereEquals(d.target.index)].y;
+            }
+            else {
+              minRadius = 24;
+              radius = Math.max(minRadius, nodes[whereEquals(d.source.index)].degree);
+              return "M" + nodes[whereEquals(d.source.index)].x + "," + nodes[whereEquals(d.source.index)].y + "A" + radius + "," + radius + " 0 1,0 " + (nodes[whereEquals(d.target.index)].x + 0.1) + "," + (nodes[whereEquals(d.target.index)].y + 0.1);
+            }
+        }
+
+        //synch with 'show names' and 'show weights' checkboxes
+        displayingWeights();
+        changeNamesVisibility(document.getElementById("show-names").checked)
+    }
+
+
+
+    function changeLabel(curinput) {
+      document.getElementById('label' + curinput.id.substring(4)).innerHTML = curinput.value;
+      mynodes[whereEquals1(curinput.id.substring(4))].name = curinput.value;
+      $(curinput).attr('size', curinput.value.length + 2)
+    };
+
+    function whereEquals1(index) {
+      for (var i = 0; i < mynodes.length; i++) {
+        if (index == mynodes[i].index) {
+          return i;
+        }
+      }
+    }
+
+    function makeCheckboxes() {
+
+      for (var i = 0; i < mynodes.length; i++) {
+
+        var newDiv = document.createElement('div');
+        newDiv.id = '#checkdiv' + mynodes[i].index;
+        $( '#check-boxes' ).append(newDiv);
+
+        var newCheckbox = document.createElement('input');
+        newCheckbox.type = 'checkbox';
+        newCheckbox.id = 'checkbox' + mynodes[i].index;
+        newCheckbox.checked = true;
+        newCheckbox.className = 'checkbox-class node-checkbox';
+        $( newDiv ).append(newCheckbox);
+
+        var newNameInput = document.createElement('input');
+        newNameInput.id = 'name-input' + mynodes[i].index;
+        newNameInput.type = 'text';
+        newNameInput.value = mynodes[i].name;
+        $( newNameInput ).attr('size', newNameInput.value.length + 3);
+
+        $( newDiv ).append(newNameInput);
+        $( newNameInput ).on('keypress', updateName);
+
+      }
+    }
+
+    function updateName() {
+
+      document.getElementById('node-name' + this.id.substring(10)).innerHTML = this.value;
+      mynodes[this.id.substring(10)].name = this.value;
+      this.size = this.value.length + 3;
+
+    }
+
+    function getCorrectLinks(newIdx) {
+      var newLinks = [];
+      for (var i = 0; i < mylinks.length; i++) {
+        if (newIdx.includes(mylinks[i].source.index) && newIdx.includes(mylinks[i].target.index)) {
+          newLinks.push(mylinks[i]);
+        }
+      }
+      return newLinks;
+    }
+    function clearSVG() {
+      $( 'svg' ).remove();
+      $( '.node-edit' ).each(function() {
+        this.remove();
+      });
+    }
+    function changeNodes() {
+      var newNodes = [];
+      var newIdx = [];
+
+      $( '.node-checkbox' ).each(function(i, obj) {
+
+        if (this.checked) {
+          newNodes.push(mynodes[i]);
+          newIdx.push(mynodes[i].index);
+        }
+
+      });
+
+      var newLinks = getCorrectLinks(newIdx)
+
+
+      clearSVG();
+      drawGraph(newNodes, newLinks);
+    }
+
+    function setLinkThreshold () {
+      let idxInLinks = new Array(mynodes.length).fill(false);
+      let newLinks = [];
+
+      let thresholdValue = $('#threshold-link-range').val();
+      let blockDeleteTargets = $('#block-targets')[0].checked;
+
+      for (let i = 0; i < mylinks.length; i++) {
+        if (mylinks[i].target.type == 'nice_node' || mylinks[i].source.type == 'nice_node' || mylinks[i].target.type == 'bad_node' || mylinks[i].source.type == 'bad_node') {
+          if (blockDeleteTargets) {
+
+            newLinks.push(mylinks[i]);
+            idxInLinks[mylinks[i].target.index] = true;
+            idxInLinks[mylinks[i].source.index] = true;
+          } else if (mylinks[i].weight * maxWeigth >= thresholdValue) {
+            newLinks.push(mylinks[i]);
+            idxInLinks[mylinks[i].target.index] = true;
+            idxInLinks[mylinks[i].source.index] = true;
+          }
+        } else if (mylinks[i].weight * maxWeigth >= thresholdValue) {
+          newLinks.push(mylinks[i]);
+          idxInLinks[mylinks[i].target.index] = true;
+          idxInLinks[mylinks[i].source.index] = true;
+        }
+      }
+
+      let newNodes = [];
+      for (let i = 0; i < mynodes.length; i++) {
+        if (idxInLinks[i]) {
+          newNodes.push(mynodes[i]);
+          $('#checkbox' + mynodes[i].index).prop('checked', true);
+        } else {
+          $('#checkbox' + mynodes[i].index).prop('checked', false);
+        }
+      }
+      clearSVG();
+      drawGraph(newNodes, newLinks);
+    }
+
+    function updateLinkThresholdText(val) {
+      document.getElementById('threshold-link-text').innerHTML = val;
+    }
+
+    function setNodeThreshold() {
+      var newNodes = [];
+      var newIdx = [];
+
+      let thresholdValue = $('#threshold-node-range').val();
+      let blockDeleteTargets = $('#block-targets')[0].checked;
+
+      for (let i = 0; i < mynodes.length; i++) {
+        if (mynodes[i].type == 'bad_node' || mynodes[i].type == 'nice_node') {
+          if (blockDeleteTargets) {
+            newNodes.push(mynodes[i]);
+            newIdx.push(mynodes[i].index);
+            $('#checkbox' + mynodes[i].index).prop('checked', true);
+          } else if (mynodes[i].degree >= $('#threshold-node-range').val() * maxDegree) {
+            newNodes.push(mynodes[i]);
+            newIdx.push(mynodes[i].index);
+            $('#checkbox' + mynodes[i].index).prop('checked', true);
+          } else {
+            $('#checkbox' + mynodes[i].index).prop('checked', false);
+          }
+        } else if (mynodes[i].degree >= $('#threshold-node-range').val() * maxDegree) {
+          newNodes.push(mynodes[i]);
+          newIdx.push(mynodes[i].index);
+          $('#checkbox' + mynodes[i].index).prop('checked', true);
+        } else {
+          $('#checkbox' + mynodes[i].index).prop('checked', false);
+        }
+      }
+      var newLinks = getCorrectLinks(newIdx);
+
+      clearSVG();
+      drawGraph(newNodes, newLinks);
+    }
+
+    function updateNodeThresholdText(val) {
+      document.getElementById('threshold-node-text').innerHTML = val;
+    }
+
+
+    function changeNamesVisibility(isHidden) {
+
+      if (isHidden) {
+        $('.node-name').each(
+          function() {
+            $(this).show();
+          });
+      } else {
+        $('.node-name').each(
+          function() {
+            $(this).hide();
+          });
+      }
+    }
+
+    function downloadLayout() {
+        var a = document.createElement("a");
+        var file = new Blob([JSON.stringify(mynodes)], {type: "text/json;charset=utf-8"});
+        a.href = URL.createObjectURL(file);
+        a.download = "node_params.json";
+        console.log(1);
+        a.click();
+
+    }
+
+  </script>
+
+  <style type="text/css">
+      watermark {
+        width: 100%;
+      }
+      watermark h3 {
+        width: 100%;
+        text-align: center;
+      }
+      html {
+        font-size: 10px;
+      }
+
+      circle {
+        fill: #ccc;
+        stroke: #333;
+        stroke-width: 1.5px;
+      }
+
+      .circle.source_node {
+        fill: #f3f310;
+      }
+
+      .circle.nice_node {
+        fill: green;
+      }
+
+      .circle.bad_node {
+        fill: red;
+      }
+
+      .link {
+        fill: none;
+        stroke: #666;
+        stroke-opacity: 0.7;
+      }
+
+      #nice_target {
+        fill: green;
+      }
+
+      .link.nice_target {
+        stroke: green;
+      }
+
+      #source {
+        fill: yellow;
+      }
+
+      .link.source {
+        stroke: #f3f310;
+      }
+
+      .link.positive {
+        stroke: green;
+      }
+
+      .link.negative {
+        stroke: red;
+      }
+
+      #source {
+        fill: orange;
+      }
+
+      .link.source1 {
+        stroke: orange;
+      }
+
+      #bad_target {
+        fill: red;
+      }
+
+      .link.bad_target {
+        stroke: red;
+      }
+      text {
+        font: 12px sans-serif;
+        pointer-events: none;
+      }
+
+      main li {
+        display: inline;
+      }
+      .graphlist {
+        list-style-type: none;
+
+      }
+      .graphloader {
+        margin-top: 5%;
+        margin-bottom: 5%;
+      }
+      .graphloader input {
+        margin: auto;
+      }
+
+      h1 {
+        text-align: center;
+      }
+
+      .bottom-checkbox {
+        margin-right: 5%;
+        display: inline;
+      }
+
+      .checkbox-class {
+        margin-right: 3px;
+      }
+
+      .node-edit {
+        position: relative;
+        font-size: 12px;
+        border: none;
+        background-color: rgba(1,1,1,0);
+      }
+
+      .node-edit:focus {
+        background-color: #ddd;
+      }
+
+      #option {
+        margin-left: 5px;
+      }
+
+      #freakingGraph {
+        border: solid 2px black;
+        /*position: relative;*/
+      }
+
+      .container {
+        margin: 0!important;
+        padding-right: 0!important;
+        max-width: 1200px!important;
+      }
+      .col-8 {
+        padding: 0px 4px 0px 2px!important;
+      }
+      .col-4 {
+        padding-right: 0px!important;
+      }
+      @media (max-width: 576px) {
+        form label {
+          font-size: 10px;
+        }
+      }
+
+
+      @media (max-width: 768px) {
+        form label {
+          font-size: 0.8rem;
+        }
+      }
+
+
+      @media (max-width: 992px) {
+        form label {
+          font-size: 1rem;
+        }
+      }
+
+      @media (max-width: 1200px) {
+        form label {
+          font-size: 1rem;
+        }
+      }
+
+      @media (min-width: 1201px) {
+        form label {
+          font-size: 1.4rem;
+        }
+      }
+
+  </style>
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous">
+</head>
+<body>
+
+
+
+  <main>
+
+    <div class="container">
+
+        <div class="row">
+          <div class="watermark" style="z-index: 1010; background-color: #FFF; width: 100%">
+            <h3>Retentioneering</h3>
+          </div>
+          <div class="col-8">
+
+            <div id="freakingGraph" style="z-index: 1000">
+              <!-- graph will be appended here -->
+            </div>
+          </div>
+          <div class="col-4" style="z-index: 1010; background-color: #FFF">
+            <form>
+              <div id="check-boxes">
+
+              </div>
+              <br>
+              <input name="submit" value="Update nodes" style="width: 80%;" type="button" onclick="changeNodes()">
+
+            </form>
+
+            <br>
+            <br>
+            <div style="z-index: 1010; background-color: #FFF">
+              <h6>Nodes Threshold</h6>
+              <input id="threshold-node-range" name="threshold-node" type="range" min="0" max="1" step="0.01" value="0.05"
+              oninput="updateNodeThresholdText(this.value)" onchange="updateNodeThresholdText(this.value)">
+              <label id="threshold-node-text">0.05</label>
+              <input type="button" value="Set threshold" onclick="setNodeThreshold()">
+            </div>
+            <br>
+            <div>
+              <h6>Links Threshold</h6>
+              <input id="threshold-link-range" name="threshold" type="range" min="0" max="1" step="0.01" value=0.02011667672500503
+              oninput="updateLinkThresholdText(this.value*0.9942)" onchange="updateLinkThresholdText(this.value*0.9942)">
+              <label id="threshold-link-text">0.02011667672500503</label>
+              <input type="button" value="Set threshold" onclick="setLinkThreshold()">
+            </div>
+          </div>
+
+
+
+
+          <div class="col-12" style="z-index: 1010; background-color: #FFF">
+
+            <div class="weight-checkbox bottom-checkbox">
+              <input type="checkbox" class="checkbox checkbox-class" checked value="weighted" id="show-weights"><label> Show weights </label>
+            </div>
+
+            <div class="percent-checkbox bottom-checkbox">
+              <input type="checkbox" class="checkbox checkbox-class" checked id="show-percents"><label> Percents </label>
+            </div>
+
+            <div class="bottom-checkbox">
+              <input type="checkbox" class="checkbox checkbox-class" checked id="show-names" onchange="changeNamesVisibility(this.checked)"><label> Show nodes names</label>
+            </div>
+
+            <div class="bottom-checkbox">
+              <input type="checkbox" class="checkbox checkbox-class" id="block-targets" onchange="setLinkThreshold ()"><label> Show all edges for targets </label>
+            </div>
+            <div id="option">
+              <input name="downloadButton"
+              type="button"
+              value="download"
+              onclick="downloadLayout()" />
+            </div>
+          </div>
+      </div>
+
+
+
+
+  </main>
+
+  <script src="https://api.retentioneering.com/files/d3.v4.min.js"></script>
+
+  <script type="text/javascript">
+
+    updateLinkThresholdText(0.02011667672500503*0.9942);
+    initialize([{"index": 0, "name": "fill_user_info", "x": 458.0, "y": 89.8012289743194, "type": "suit_node", "degree": 4.814405788428584}, {"index": 1, "name": "checkout", "x": 437.7733766091389, "y": 176.40172096856958, "type": "suit_node", "degree": 4.320702880613661}, {"index": 2, "name": "phones/apple/123", "x": 204.22045094184168, "y": 106.22895694446663, "type": "suit_node", "degree": 10.125588227293747}, {"index": 3, "name": "main", "x": 125.23189377329412, "y": 115.5691713325668, "type": "suit_node", "degree": 34.0}, {"index": 4, "name": "laptops", "x": 116.03060869270476, "y": 87.81383003899751, "type": "suit_node", "degree": 18.851073089791363}, {"index": 5, "name": "phones/apple", "x": 191.9973600695781, "y": 124.54570569416488, "type": "suit_node", "degree": 22.478769414900853}, {"index": 6, "name": "support/message_sent", "x": 379.2611516515567, "y": 86.52944214234978, "type": "suit_node", "degree": 4.791148709300112}, {"index": 7, "name": "payment_done", "x": 319.3856338955231, "y": 283.0, "type": "suit_node", "degree": 4.056306612626826}, {"index": 8, "name": "item_details", "x": 204.317076334945, "y": 78.10695826092362, "type": "suit_node", "degree": 14.413459184506161}, {"index": 9, "name": "support", "x": 263.2183067834477, "y": 89.76714093698044, "type": "suit_node", "degree": 6.146179582732639}, {"index": 10, "name": "phones", "x": 155.96249344980873, "y": 132.40459893733936, "type": "suit_node", "degree": 29.016048744661752}, {"index": 11, "name": "cart", "x": 343.9684891427792, "y": 55.381861014961196, "type": "suit_node", "degree": 5.151021407393303}, {"index": 12, "name": "laptops/xiaomi/1234", "x": 156.62096024892892, "y": 65.00846003949314, "type": "suit_node", "degree": 11.443081358975057}, {"index": 13, "name": "lost", "x": 75.0, "y": 134.86492435598265, "type": "suit_node", "degree": 20.402361069553628}, {"index": 14, "name": "laptops/xiaomi", "x": 115.74438619122716, "y": 59.89050745222827, "type": "suit_node", "degree": 11.001196855534097}, {"index": 15, "name": "item_reviews", "x": 251.38808086414662, "y": 50.0, "type": "suit_node", "degree": 6.699453254631015}], {"order": "nice_target"}, [{"source": {"index": 11, "name": "cart", "x": 343.9684891427792, "y": 55.381861014961196, "type": "suit_node", "degree": 5.151021407393303}, "target": {"index": 0, "name": "fill_user_info", "x": 458.0, "y": 89.8012289743194, "type": "suit_node", "degree": 4.814405788428584}, "weight": 0.11667672500502918, "weight_text": 0.116, "type": "suit"}, {"source": {"index": 11, "name": "cart", "x": 343.9684891427792, "y": 55.381861014961196, "type": "suit_node", "degree": 5.151021407393303}, "target": {"index": 15, "name": "item_reviews", "x": 251.38808086414662, "y": 50.0, "type": "suit_node", "degree": 6.699453254631015}, "weight": 0.13297123315228326, "weight_text": 0.1322, "type": "suit"}, {"source": {"index": 11, "name": "cart", "x": 343.9684891427792, "y": 55.381861014961196, "type": "suit_node", "degree": 5.151021407393303}, "target": {"index": 13, "name": "lost", "x": 75.0, "y": 134.86492435598265, "type": "suit_node", "degree": 20.402361069553628}, "weight": 0.06517803258901629, "weight_text": 0.0648, "type": "suit"}, {"source": {"index": 11, "name": "cart", "x": 343.9684891427792, "y": 55.381861014961196, "type": "suit_node", "degree": 5.151021407393303}, "target": {"index": 6, "name": "support/message_sent", "x": 379.2611516515567, "y": 86.52944214234978, "type": "suit_node", "degree": 4.791148709300112}, "weight": 0.14061557030778515, "weight_text": 0.1398, "type": "suit"}, {"source": {"index": 1, "name": "checkout", "x": 437.7733766091389, "y": 176.40172096856958, "type": "suit_node", "degree": 4.320702880613661}, "target": {"index": 0, "name": "fill_user_info", "x": 458.0, "y": 89.8012289743194, "type": "suit_node", "degree": 4.814405788428584}, "weight": 0.0635686984510159, "weight_text": 0.0632, "type": "suit"}, {"source": {"index": 1, "name": "checkout", "x": 437.7733766091389, "y": 176.40172096856958, "type": "suit_node", "degree": 4.320702880613661}, "target": {"index": 13, "name": "lost", "x": 75.0, "y": 134.86492435598265, "type": "suit_node", "degree": 20.402361069553628}, "weight": 0.024743512371756187, "weight_text": 0.0246, "type": "suit"}, {"source": {"index": 1, "name": "checkout", "x": 437.7733766091389, "y": 176.40172096856958, "type": "suit_node", "degree": 4.320702880613661}, "target": {"index": 7, "name": "payment_done", "x": 319.3856338955231, "y": 283.0, "type": "suit_node", "degree": 4.056306612626826}, "weight": 0.02776101388050694, "weight_text": 0.0276, "type": "suit"}, {"source": {"index": 0, "name": "fill_user_info", "x": 458.0, "y": 89.8012289743194, "type": "suit_node", "degree": 4.814405788428584}, "target": {"index": 11, "name": "cart", "x": 343.9684891427792, "y": 55.381861014961196, "type": "suit_node", "degree": 5.151021407393303}, "weight": 0.042647354657010667, "weight_text": 0.0424, "type": "suit"}, {"source": {"index": 0, "name": "fill_user_info", "x": 458.0, "y": 89.8012289743194, "type": "suit_node", "degree": 4.814405788428584}, "target": {"index": 1, "name": "checkout", "x": 437.7733766091389, "y": 176.40172096856958, "type": "suit_node", "degree": 4.320702880613661}, "weight": 0.09575538121102395, "weight_text": 0.0952, "type": "suit"}, {"source": {"index": 0, "name": "fill_user_info", "x": 458.0, "y": 89.8012289743194, "type": "suit_node", "degree": 4.814405788428584}, "target": {"index": 13, "name": "lost", "x": 75.0, "y": 134.86492435598265, "type": "suit_node", "degree": 20.402361069553628}, "weight": 0.038422852544759606, "weight_text": 0.0382, "type": "suit"}, {"source": {"index": 0, "name": "fill_user_info", "x": 458.0, "y": 89.8012289743194, "type": "suit_node", "degree": 4.814405788428584}, "target": {"index": 6, "name": "support/message_sent", "x": 379.2611516515567, "y": 86.52944214234978, "type": "suit_node", "degree": 4.791148709300112}, "weight": 0.10460671897002614, "weight_text": 0.104, "type": "suit"}, {"source": {"index": 8, "name": "item_details", "x": 204.317076334945, "y": 78.10695826092362, "type": "suit_node", "degree": 14.413459184506161}, "target": {"index": 15, "name": "item_reviews", "x": 251.38808086414662, "y": 50.0, "type": "suit_node", "degree": 6.699453254631015}, "weight": 0.5393281029973849, "weight_text": 0.5362, "type": "suit"}, {"source": {"index": 8, "name": "item_details", "x": 204.317076334945, "y": 78.10695826092362, "type": "suit_node", "degree": 14.413459184506161}, "target": {"index": 12, "name": "laptops/xiaomi/1234", "x": 156.62096024892892, "y": 65.00846003949314, "type": "suit_node", "degree": 11.443081358975057}, "weight": 0.5505934419633877, "weight_text": 0.5474, "type": "suit"}, {"source": {"index": 8, "name": "item_details", "x": 204.317076334945, "y": 78.10695826092362, "type": "suit_node", "degree": 14.413459184506161}, "target": {"index": 13, "name": "lost", "x": 75.0, "y": 134.86492435598265, "type": "suit_node", "degree": 20.402361069553628}, "weight": 0.4357272178636089, "weight_text": 0.4332, "type": "suit"}, {"source": {"index": 8, "name": "item_details", "x": 204.317076334945, "y": 78.10695826092362, "type": "suit_node", "degree": 14.413459184506161}, "target": {"index": 2, "name": "phones/apple/123", "x": 204.22045094184168, "y": 106.22895694446663, "type": "suit_node", "degree": 10.125588227293747}, "weight": 0.5707101186883927, "weight_text": 0.5674, "type": "suit"}, {"source": {"index": 8, "name": "item_details", "x": 204.317076334945, "y": 78.10695826092362, "type": "suit_node", "degree": 14.413459184506161}, "target": {"index": 9, "name": "support", "x": 263.2183067834477, "y": 89.76714093698044, "type": "suit_node", "degree": 6.146179582732639}, "weight": 0.4890364111848723, "weight_text": 0.4862, "type": "suit"}, {"source": {"index": 15, "name": "item_reviews", "x": 251.38808086414662, "y": 50.0, "type": "suit_node", "degree": 6.699453254631015}, "target": {"index": 11, "name": "cart", "x": 343.9684891427792, "y": 55.381861014961196, "type": "suit_node", "degree": 5.151021407393303}, "weight": 0.2850533091933213, "weight_text": 0.2834, "type": "suit"}, {"source": {"index": 15, "name": "item_reviews", "x": 251.38808086414662, "y": 50.0, "type": "suit_node", "degree": 6.699453254631015}, "target": {"index": 8, "name": "item_details", "x": 204.317076334945, "y": 78.10695826092362, "type": "suit_node", "degree": 14.413459184506161}, "weight": 0.4264735465701066, "weight_text": 0.424, "type": "suit"}, {"source": {"index": 15, "name": "item_reviews", "x": 251.38808086414662, "y": 50.0, "type": "suit_node", "degree": 6.699453254631015}, "target": {"index": 13, "name": "lost", "x": 75.0, "y": 134.86492435598265, "type": "suit_node", "degree": 20.402361069553628}, "weight": 0.11406155703077851, "weight_text": 0.1134, "type": "suit"}, {"source": {"index": 4, "name": "laptops", "x": 116.03060869270476, "y": 87.81383003899751, "type": "suit_node", "degree": 18.851073089791363}, "target": {"index": 14, "name": "laptops/xiaomi", "x": 115.74438619122716, "y": 59.89050745222827, "type": "suit_node", "degree": 11.001196855534097}, "weight": 0.8531482599074632, "weight_text": 0.8482, "type": "suit"}, {"source": {"index": 4, "name": "laptops", "x": 116.03060869270476, "y": 87.81383003899751, "type": "suit_node", "degree": 18.851073089791363}, "target": {"index": 13, "name": "lost", "x": 75.0, "y": 134.86492435598265, "type": "suit_node", "degree": 20.402361069553628}, "weight": 0.5906256286461478, "weight_text": 0.5872, "type": "suit"}, {"source": {"index": 4, "name": "laptops", "x": 116.03060869270476, "y": 87.81383003899751, "type": "suit_node", "degree": 18.851073089791363}, "target": {"index": 3, "name": "main", "x": 125.23189377329412, "y": 115.5691713325668, "type": "suit_node", "degree": 34.0}, "weight": 0.9326091329712332, "weight_text": 0.9272, "type": "suit"}, {"source": {"index": 14, "name": "laptops/xiaomi", "x": 115.74438619122716, "y": 59.89050745222827, "type": "suit_node", "degree": 11.001196855534097}, "target": {"index": 4, "name": "laptops", "x": 116.03060869270476, "y": 87.81383003899751, "type": "suit_node", "degree": 18.851073089791363}, "weight": 0.3258901629450815, "weight_text": 0.324, "type": "suit"}, {"source": {"index": 14, "name": "laptops/xiaomi", "x": 115.74438619122716, "y": 59.89050745222827, "type": "suit_node", "degree": 11.001196855534097}, "target": {"index": 12, "name": "laptops/xiaomi/1234", "x": 156.62096024892892, "y": 65.00846003949314, "type": "suit_node", "degree": 11.443081358975057}, "weight": 0.795614564473949, "weight_text": 0.791, "type": "suit"}, {"source": {"index": 14, "name": "laptops/xiaomi", "x": 115.74438619122716, "y": 59.89050745222827, "type": "suit_node", "degree": 11.001196855534097}, "target": {"index": 13, "name": "lost", "x": 75.0, "y": 134.86492435598265, "type": "suit_node", "degree": 20.402361069553628}, "weight": 0.40213236773285055, "weight_text": 0.3998, "type": "suit"}, {"source": {"index": 12, "name": "laptops/xiaomi/1234", "x": 156.62096024892892, "y": 65.00846003949314, "type": "suit_node", "degree": 11.443081358975057}, "target": {"index": 8, "name": "item_details", "x": 204.317076334945, "y": 78.10695826092362, "type": "suit_node", "degree": 14.413459184506161}, "weight": 0.7256085294709315, "weight_text": 0.7214, "type": "suit"}, {"source": {"index": 12, "name": "laptops/xiaomi/1234", "x": 156.62096024892892, "y": 65.00846003949314, "type": "suit_node", "degree": 11.443081358975057}, "target": {"index": 14, "name": "laptops/xiaomi", "x": 115.74438619122716, "y": 59.89050745222827, "type": "suit_node", "degree": 11.001196855534097}, "weight": 0.5771474552403942, "weight_text": 0.5738, "type": "suit"}, {"source": {"index": 12, "name": "laptops/xiaomi/1234", "x": 156.62096024892892, "y": 65.00846003949314, "type": "suit_node", "degree": 11.443081358975057}, "target": {"index": 13, "name": "lost", "x": 75.0, "y": 134.86492435598265, "type": "suit_node", "degree": 20.402361069553628}, "weight": 0.3472138402735868, "weight_text": 0.3452, "type": "suit"}, {"source": {"index": 13, "name": "lost", "x": 75.0, "y": 134.86492435598265, "type": "suit_node", "degree": 20.402361069553628}, "target": {"index": 3, "name": "main", "x": 125.23189377329412, "y": 115.5691713325668, "type": "suit_node", "degree": 34.0}, "weight": 1.0, "weight_text": 0.9942, "type": "suit"}, {"source": {"index": 3, "name": "main", "x": 125.23189377329412, "y": 115.5691713325668, "type": "suit_node", "degree": 34.0}, "target": {"index": 4, "name": "laptops", "x": 116.03060869270476, "y": 87.81383003899751, "type": "suit_node", "degree": 18.851073089791363}, "weight": 0.9879299939649969, "weight_text": 0.9822, "type": "suit"}, {"source": {"index": 3, "name": "main", "x": 125.23189377329412, "y": 115.5691713325668, "type": "suit_node", "degree": 34.0}, "target": {"index": 13, "name": "lost", "x": 75.0, "y": 134.86492435598265, "type": "suit_node", "degree": 20.402361069553628}, "weight": 0.7517602092134379, "weight_text": 0.7474, "type": "suit"}, {"source": {"index": 3, "name": "main", "x": 125.23189377329412, "y": 115.5691713325668, "type": "suit_node", "degree": 34.0}, "target": {"index": 10, "name": "phones", "x": 155.96249344980873, "y": 132.40459893733936, "type": "suit_node", "degree": 29.016048744661752}, "weight": 0.9979883323274995, "weight_text": 0.9922, "type": "suit"}, {"source": {"index": 7, "name": "payment_done", "x": 319.3856338955231, "y": 283.0, "type": "suit_node", "degree": 4.056306612626826}, "target": {"index": 3, "name": "main", "x": 125.23189377329412, "y": 115.5691713325668, "type": "suit_node", "degree": 34.0}, "weight": 0.02333534500100583, "weight_text": 0.0232, "type": "suit"}, {"source": {"index": 10, "name": "phones", "x": 155.96249344980873, "y": 132.40459893733936, "type": "suit_node", "degree": 29.016048744661752}, "target": {"index": 13, "name": "lost", "x": 75.0, "y": 134.86492435598265, "type": "suit_node", "degree": 20.402361069553628}, "weight": 0.8617984308992155, "weight_text": 0.8568, "type": "suit"}, {"source": {"index": 10, "name": "phones", "x": 155.96249344980873, "y": 132.40459893733936, "type": "suit_node", "degree": 29.016048744661752}, "target": {"index": 3, "name": "main", "x": 125.23189377329412, "y": 115.5691713325668, "type": "suit_node", "degree": 34.0}, "weight": 0.8348420840877087, "weight_text": 0.83, "type": "suit"}, {"source": {"index": 10, "name": "phones", "x": 155.96249344980873, "y": 132.40459893733936, "type": "suit_node", "degree": 29.016048744661752}, "target": {"index": 5, "name": "phones/apple", "x": 191.9973600695781, "y": 124.54570569416488, "type": "suit_node", "degree": 22.478769414900853}, "weight": 0.9802856568094951, "weight_text": 0.9746, "type": "suit"}, {"source": {"index": 5, "name": "phones/apple", "x": 191.9973600695781, "y": 124.54570569416488, "type": "suit_node", "degree": 22.478769414900853}, "target": {"index": 13, "name": "lost", "x": 75.0, "y": 134.86492435598265, "type": "suit_node", "degree": 20.402361069553628}, "weight": 0.7777107221886944, "weight_text": 0.7732, "type": "suit"}, {"source": {"index": 5, "name": "phones/apple", "x": 191.9973600695781, "y": 124.54570569416488, "type": "suit_node", "degree": 22.478769414900853}, "target": {"index": 10, "name": "phones", "x": 155.96249344980873, "y": 132.40459893733936, "type": "suit_node", "degree": 29.016048744661752}, "weight": 0.9334138000402334, "weight_text": 0.928, "type": "suit"}, {"source": {"index": 5, "name": "phones/apple", "x": 191.9973600695781, "y": 124.54570569416488, "type": "suit_node", "degree": 22.478769414900853}, "target": {"index": 2, "name": "phones/apple/123", "x": 204.22045094184168, "y": 106.22895694446663, "type": "suit_node", "degree": 10.125588227293747}, "weight": 0.7533695433514384, "weight_text": 0.749, "type": "suit"}, {"source": {"index": 2, "name": "phones/apple/123", "x": 204.22045094184168, "y": 106.22895694446663, "type": "suit_node", "degree": 10.125588227293747}, "target": {"index": 8, "name": "item_details", "x": 204.317076334945, "y": 78.10695826092362, "type": "suit_node", "degree": 14.413459184506161}, "weight": 0.6648561657614163, "weight_text": 0.661, "type": "suit"}, {"source": {"index": 2, "name": "phones/apple/123", "x": 204.22045094184168, "y": 106.22895694446663, "type": "suit_node", "degree": 10.125588227293747}, "target": {"index": 13, "name": "lost", "x": 75.0, "y": 134.86492435598265, "type": "suit_node", "degree": 20.402361069553628}, "weight": 0.24823979078656205, "weight_text": 0.2468, "type": "suit"}, {"source": {"index": 2, "name": "phones/apple/123", "x": 204.22045094184168, "y": 106.22895694446663, "type": "suit_node", "degree": 10.125588227293747}, "target": {"index": 5, "name": "phones/apple", "x": 191.9973600695781, "y": 124.54570569416488, "type": "suit_node", "degree": 22.478769414900853}, "weight": 0.5896197948098975, "weight_text": 0.5862, "type": "suit"}, {"source": {"index": 9, "name": "support", "x": 263.2183067834477, "y": 89.76714093698044, "type": "suit_node", "degree": 6.146179582732639}, "target": {"index": 8, "name": "item_details", "x": 204.317076334945, "y": 78.10695826092362, "type": "suit_node", "degree": 14.413459184506161}, "weight": 0.4363307181653591, "weight_text": 0.4338, "type": "suit"}, {"source": {"index": 9, "name": "support", "x": 263.2183067834477, "y": 89.76714093698044, "type": "suit_node", "degree": 6.146179582732639}, "target": {"index": 13, "name": "lost", "x": 75.0, "y": 134.86492435598265, "type": "suit_node", "degree": 20.402361069553628}, "weight": 0.15288674311003822, "weight_text": 0.152, "type": "suit"}, {"source": {"index": 9, "name": "support", "x": 263.2183067834477, "y": 89.76714093698044, "type": "suit_node", "degree": 6.146179582732639}, "target": {"index": 6, "name": "support/message_sent", "x": 379.2611516515567, "y": 86.52944214234978, "type": "suit_node", "degree": 4.791148709300112}, "weight": 0.043653188493260914, "weight_text": 0.0434, "type": "suit"}, {"source": {"index": 6, "name": "support/message_sent", "x": 379.2611516515567, "y": 86.52944214234978, "type": "suit_node", "degree": 4.791148709300112}, "target": {"index": 11, "name": "cart", "x": 343.9684891427792, "y": 55.381861014961196, "type": "suit_node", "degree": 5.151021407393303}, "weight": 0.07885737276201972, "weight_text": 0.0784, "type": "suit"}, {"source": {"index": 6, "name": "support/message_sent", "x": 379.2611516515567, "y": 86.52944214234978, "type": "suit_node", "degree": 4.791148709300112}, "target": {"index": 0, "name": "fill_user_info", "x": 458.0, "y": 89.8012289743194, "type": "suit_node", "degree": 4.814405788428584}, "weight": 0.10460671897002614, "weight_text": 0.104, "type": "suit"}, {"source": {"index": 6, "name": "support/message_sent", "x": 379.2611516515567, "y": 86.52944214234978, "type": "suit_node", "degree": 4.791148709300112}, "target": {"index": 13, "name": "lost", "x": 75.0, "y": 134.86492435598265, "type": "suit_node", "degree": 20.402361069553628}, "weight": 0.03922751961375981, "weight_text": 0.039, "type": "suit"}, {"source": {"index": 6, "name": "support/message_sent", "x": 379.2611516515567, "y": 86.52944214234978, "type": "suit_node", "degree": 4.791148709300112}, "target": {"index": 9, "name": "support", "x": 263.2183067834477, "y": 89.76714093698044, "type": "suit_node", "degree": 6.146179582732639}, "weight": 0.08670287668477168, "weight_text": 0.0862, "type": "suit"}]);
+
+    if (!1) {
+      $('.percent-checkbox').hide();
+    }
+
+  </script>
+
+  <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js" integrity="sha384-q8i/X+965DzO0rT7abK41JStQIAqVgRVzpbzo5smXKp4YfRvH+8abtTE1Pi6jizo" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js" integrity="sha384-UO2eT0CpHqdSJQ6hJty5KVphtPhzWj9WO1clHTMGa3JDZwrnQq4sF86dIHNDz0W1" crossorigin="anonymous"></script>
+  <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js" integrity="sha384-JjSmVgyd0p3pXB1rRibZUAYoIIy6OrQ6VrjIEaFf/nJGzIxFDsf4x0xIM+B07jRM" crossorigin="anonymous"></script>
+  <script src="https://code.jquery.com/jquery-3.4.1.js"></script>
+</body>
+</html>
